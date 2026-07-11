@@ -14,6 +14,10 @@ target/
 *.class
 hs_err_pid*
 
+# Gradle / Kotlin Multiplatform generated state
+.gradle/
+build/
+
 # IDE / OS
 .idea/
 *.iml

@@ -16,11 +16,13 @@ API'sini kullanir. API kapaliyken urun demosu yerel ornek veriyle calisir. Detay
 cp .env.example .env
 docker compose up -d          # PostGIS + Redis
 pnpm install
-pnpm --filter api prisma:generate
-pnpm --filter api prisma:migrate:dev
-pnpm dev                      # eski api :3001, web :3000, mcp :3002
-(cd apps/api-java && ./mvnw spring-boot:run)   # yeni Java API :8080
+pnpm dev:local                # temiz Java API :8080 + web :3010
 ```
+
+`pnpm dev:local`, eski Java/Next/Gradle derleme çıktilarini temizler, `.env` dosyasini
+yükler ve API ile web'i tek komutta baslatir. Çalisan servis varken kaynaklari elle
+derlemeyin; önce `Ctrl+C` ile kapatip bu komutla yeniden baslatin. Yalnizca temizleme
+gerekirse `pnpm clean:local` kullanin.
 
 ## Hizli test
 ```bash
