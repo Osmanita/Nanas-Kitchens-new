@@ -20,6 +20,8 @@ import tools.jackson.databind.json.JsonMapper;
 @Service
 public class InventoryService {
 
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(InventoryService.class);
+
     private final JdbcClient db;
     private final ApplicationEventPublisher events;
     private final JsonMapper jsonMapper;
@@ -125,6 +127,7 @@ public class InventoryService {
         if (menuItemIds == null || menuItemIds.isEmpty()) {
             return List.of();
         }
+        log.info("checkPortions for menuItemIds: {}", menuItemIds);
         return db.sql("""
                 SELECT id, "portionsRemaining", "portionsTotal" FROM "MenuItem" WHERE id IN (:ids)
                 """)

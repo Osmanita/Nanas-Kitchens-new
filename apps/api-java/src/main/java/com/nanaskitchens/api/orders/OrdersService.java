@@ -35,6 +35,7 @@ import tools.jackson.databind.json.JsonMapper;
 @Service
 public class OrdersService {
 
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(OrdersService.class);
     private static final double COMMISSION_RATE = 0.15;
     private static final int DELIVERY_FEE_CENTS = 399;
     private static final double DELIVERY_RADIUS_MILES = 10;
@@ -86,6 +87,10 @@ public class OrdersService {
      */
     @Transactional
     public Map<String, Object> place(String buyerId, CreateOrderRequest input) {
+        log.info("place() called: buyerId={}, menuDayId={}, kitchenId={}, items={}, confirm={}",
+                buyerId, input.menuDayId(), input.kitchenId(),
+                input.items().stream().map(i -> i.menuItemId() + "x" + i.qty()).toList(),
+                input.confirm());
         record MenuRow(String menuItemId, String dishName, int priceCents) {
         }
         List<MenuRow> menuRows = db.sql("""

@@ -357,11 +357,12 @@ export default function ChatPage() {
 
   function addPickedToOrder() {
     if (!pendingMenu) return;
-    const parts = pendingMenu.items
-      .filter((it) => (picked[it.menuItemId] ?? 0) > 0)
-      .map((it) => `${picked[it.menuItemId]} x ${it.name}`);
-    if (parts.length === 0) return;
-    const text = `I'd like ${parts.join(", ")} from ${pendingMenu.kitchenName}.`;
+    const selected = pendingMenu.items
+      .filter((it) => (picked[it.menuItemId] ?? 0) > 0);
+    if (selected.length === 0) return;
+    const parts = selected.map((it) => `${picked[it.menuItemId]} x ${it.name}`);
+    const menuItemIds = selected.map((it) => it.menuItemId).join("|");
+    const text = `I'd like ${parts.join(", ")} from ${pendingMenu.kitchenName}. [menuItemIds: ${menuItemIds}]`;
     setPendingMenu(null);
     setPicked({});
     send(text);
