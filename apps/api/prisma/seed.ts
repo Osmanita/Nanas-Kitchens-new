@@ -210,10 +210,9 @@ async function main() {
             kitchenId: kitchen.id,
             name: d.name,
             description: d.description,
-            photo: d.photo,
+            photo: meta.photo || d.photo,
             priceCents: d.priceCents,
             dietaryTags: d.dietaryTags,
-            photo: meta.photo,
             calories: meta.calories,
           },
         });

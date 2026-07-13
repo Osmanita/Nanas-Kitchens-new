@@ -41,7 +41,7 @@ public class ChatController {
      */
     @PostMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<String> stream(@Valid @RequestBody ChatRequest request, Authentication authentication) {
-        return agentService.streamChat(request.messages(), authentication.getName());
+        return agentService.streamChat(request.messages(), authentication.getName(), request.location());
     }
 
     /**

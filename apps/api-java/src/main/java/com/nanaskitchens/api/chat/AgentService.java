@@ -1,6 +1,7 @@
 package com.nanaskitchens.api.chat;
 
 import com.nanaskitchens.api.chat.dto.ChatMessage;
+import com.nanaskitchens.api.chat.dto.ChatRequest;
 import com.nanaskitchens.api.inventory.InventoryService;
 import com.nanaskitchens.api.kitchens.KitchensService;
 import com.nanaskitchens.api.orders.OrdersService;
@@ -42,7 +43,8 @@ public class AgentService {
      * {"type":"done"} — same shape the NestJS AgentService emitted, so existing web/mobile clients
      * don't need to change.
      */
-    public Flux<String> streamChat(List<ChatMessage> messages, String buyerId) {
+    public Flux<String> streamChat(
+            List<ChatMessage> messages, String buyerId, ChatRequest.Location location) {
         KitchenOrderTools tools =
                 new KitchenOrderTools(kitchensService, ordersService, inventoryService, jsonMapper, buyerId);
 
@@ -51,6 +53,14 @@ public class AgentService {
                         ? new AssistantMessage(m.content())
                         : new UserMessage(m.content()))
                 .toList();
+        if (location != null && location.isUsable()) {
+            history = java.util.stream.Stream.concat(
+                    java.util.stream.Stream.of(new UserMessage(
+                            "[Private location context: the buyer granted browser location permission. "
+                                    + "Use lat=" + location.lat() + ", lng=" + location.lng()
+                                    + " with searchKitchens. Do not ask for location or show these coordinates.]")),
+                    history.stream()).toList();
+        }
 
         Flux<String> textDeltas = chatClient
                 .prompt()

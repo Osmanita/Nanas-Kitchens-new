@@ -30,6 +30,23 @@ interface HealthReport {
 
 const MAX_PHOTOS = 10;
 
+/** Demo-safe USPS-style normalization. A real USPS API provider can replace this once its
+ * credentials are configured; the seller must always approve the suggested address. */
+function uspsStyleSuggestion(raw: string): string | null {
+  let value = raw.trim().replace(/\s+/g, " ");
+  if (!value) return null;
+  value = value
+    .replace(/\baz[ae]lea\b/gi, "Azalea")
+    .replace(/\bdrive\b\.?/gi, "Dr")
+    .replace(/\bstreet\b\.?/gi, "St")
+    .replace(/\broad\b\.?/gi, "Rd")
+    .replace(/\bavenue\b\.?/gi, "Ave")
+    .replace(/\bpowell\s*,?\s*oh(?:io)?\b/i, "Powell, OH 43065");
+  // Add separators when a seller enters the common street/city/state free-text pattern.
+  value = value.replace(/^(\d+\s+[^,]+?)\s+(Powell, OH 43065)$/i, "$1, $2");
+  return value.localeCompare(raw.trim(), undefined, { sensitivity: "accent" }) === 0 ? null : value;
+}
+
 export default function SellerKitchenPage() {
   const router = useRouter();
   const [session, setSession] = useState<Session | null | undefined>(undefined);
@@ -43,6 +60,7 @@ export default function SellerKitchenPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [addressSuggestion, setAddressSuggestion] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -264,10 +282,46 @@ export default function SellerKitchenPage() {
             value={form.address}
             onChange={(e) => {
               setForm((f) => ({ ...f, address: e.target.value }));
+              setAddressSuggestion(null);
               setNeedManualGeo(false);
             }}
+            onBlur={() => setAddressSuggestion(uspsStyleSuggestion(form.address))}
           />
         </label>
+        {addressSuggestion && (
+          <div
+            role="status"
+            style={{
+              background: "#fff7e8",
+              border: "1px solid #f1d39a",
+              borderRadius: 10,
+              padding: "12px 14px",
+              margin: "-4px 0 14px",
+              fontSize: 14,
+            }}
+          >
+            <strong>Suggested USPS-format address</strong>
+            <div style={{ margin: "5px 0 10px" }}>{addressSuggestion}</div>
+            <p style={{ margin: "0 0 10px", color: "var(--brand-muted)", fontSize: 13 }}>
+              Would you like to use this corrected format? Your address is still encrypted and never public.
+            </p>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button
+                type="button"
+                className="btn-add"
+                onClick={() => {
+                  setForm((f) => ({ ...f, address: addressSuggestion }));
+                  setAddressSuggestion(null);
+                }}
+              >
+                Use suggested address
+              </button>
+              <button type="button" className="btn-add" onClick={() => setAddressSuggestion(null)}>
+                Keep my entry
+              </button>
+            </div>
+          </div>
+        )}
         {needManualGeo && (
           <div style={{ display: "flex", gap: 12 }}>
             <label style={{ flex: 1 }}>

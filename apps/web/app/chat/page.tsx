@@ -9,6 +9,11 @@ interface Message {
   content: string;
 }
 
+interface BrowserLocation {
+  lat: number;
+  lng: number;
+}
+
 interface OrderSummary {
   confirmed: false;
   summary: {
@@ -204,6 +209,7 @@ export default function ChatPage() {
   const [recordSeconds, setRecordSeconds] = useState(0);
   const [transcribing, setTranscribing] = useState(false);
   const [voiceNotice, setVoiceNotice] = useState<string | null>(null);
+  const [browserLocation, setBrowserLocation] = useState<BrowserLocation | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const recordTimerRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -214,6 +220,16 @@ export default function ChatPage() {
   }, [messages]);
 
   useEffect(() => () => clearInterval(recordTimerRef.current), []);
+
+  // Only share coordinates with the API after the browser permission has been granted.
+  useEffect(() => {
+    if (!navigator.geolocation) return;
+    navigator.geolocation.getCurrentPosition(
+      (position) => setBrowserLocation({ lat: position.coords.latitude, lng: position.coords.longitude }),
+      () => setBrowserLocation(null),
+      { enableHighAccuracy: false, timeout: 8000, maximumAge: 5 * 60 * 1000 },
+    );
+  }, []);
 
   // When the assistant finishes: send anything the user typed meanwhile, keep focus in the box.
   useEffect(() => {
@@ -251,7 +267,7 @@ export default function ChatPage() {
       // apiFetch refreshes the access token and retries once on 401 (15-min expiry).
       const res = await apiFetch(`/chat/stream`, {
         method: "POST",
-        body: JSON.stringify({ messages: next }),
+        body: JSON.stringify({ messages: next, location: browserLocation }),
       });
 
       if (res.status === 401 || res.status === 403) {

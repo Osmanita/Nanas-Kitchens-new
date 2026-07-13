@@ -137,7 +137,8 @@ public class OrdersService {
                 .mapToInt(it -> valid.get(it.menuItemId()).priceCents() * it.qty())
                 .sum();
         int deliveryFeeCents = isDelivery ? DELIVERY_FEE_CENTS : 0;
-        int courierTipCents = isDelivery ? input.courierTipCents() : 0;
+        // Older AI confirmation cards do not include this newer optional field.
+        int courierTipCents = isDelivery && input.courierTipCents() != null ? input.courierTipCents() : 0;
         int totalCents = foodSubtotalCents + deliveryFeeCents + courierTipCents;
         int commissionCents = (int) Math.round(foodSubtotalCents * COMMISSION_RATE);
 

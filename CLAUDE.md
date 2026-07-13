@@ -101,14 +101,19 @@ menülerini idempotent şekilde yayınlar. Otomatikleştirilmedi (aday iş).
 
 ## Bilinen eksikler / sıradaki adaylar
 
-- Story'ler: 2.1/2.2 menu CRUD taşınması, 4.x gerçek DoorDash, 5.2 kalanlar, 6.x, 7.x.
-- Sipariş geçmişi sayfası ve satıcı paneli yok.
-- Token 15 dk'da expire; refresh akışı UI'da yok (chat 401'de /login'e atar).
-- Günlük seed otomasyonu yok (yukarıdaki tuzak).
+- Dış kimlik bilgisi bekleyenler: gerçek DoorDash/Grubhub (mock provider hazır),
+  Stripe Connect satıcı ödemeleri, FCM/SES push/email kanalları (in-app inbox çalışıyor),
+  Whisper STT (mock STT çalışıyor).
+- 6.x/7.x, satıcı paneli, sipariş geçmişi (/orders), token refresh (apiFetch 401'de
+  yeniler) ve günlük menü rollover'ı (MenuRolloverJob, MENU_DAILY_ROLLOVER=false ile
+  kapanır) TAMAMLANDI — README durum tablosuna bak.
 - CI (GitHub Actions): pnpm sürümü package.json `packageManager`'dan gelir — workflow'a
   `version:` EKLEME (çift tanım hatası verir).
 - Kaloriler temsili dev verisi; Nominatim dev geocoder'ı (üretimde ücretli servise
   geçilecek seam hazır: GeocodingService).
+- globals.css iki tasarım sistemini birlikte taşır: marka token'ları (--brand-*) pazar
+  sayfaları için, chat/track bölümü (--accent/--surface/..., dosyanın altında) sadece
+  /chat ve /track için. `.btn-primary` çakışması `.btn.btn-primary` scoping'iyle çözülü.
 
 ## Test kullanıcı akışı (uçtan uca doğrulanmış)
 

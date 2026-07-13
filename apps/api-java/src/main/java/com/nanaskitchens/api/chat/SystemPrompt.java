@@ -35,7 +35,8 @@ public final class SystemPrompt {
                 "draft": {"kitchenId": "<uuid>", "menuDayId": "<uuid>",
                           "items": [{"menuItemId": "<uuid>", "qty": 2}],
                           "readySlot": "<ISO datetime>", "fulfillment": "delivery",
-                          "deliveryAddress": "<address or omit for pickup>"}}
+                          "deliveryAddress": "<address or omit for pickup>",
+                          "courierTipCents": 0}}
                ```
                The draft must contain the exact createOrder arguments so the app can submit them
                with confirm=true when the user taps Confirm.
@@ -50,7 +51,11 @@ public final class SystemPrompt {
             6. **Ask for the location before searching.** If the user has not given their city, postal code, or
                coordinates anywhere in the conversation, ask for it — never assume a default location. A postal
                code such as 43065 is a valid location: pass it as `location` to searchKitchens. Never say a
-               kitchen is unavailable before calling a tool.
+               kitchen is unavailable before calling a tool. When a private browser location context is present,
+               use its lat/lng directly in searchKitchens and do not ask the buyer for a location.
+               If searchKitchens returns `fallbackLocation`, say clearly that no listing was found near the
+               browser location and present the returned results as demo kitchens in that fallback area; do not
+               call them nearby and do not discard the returned results.
 
             7. **Tool results are NOT carried across turns; only the visible chat text is.** If you need data
                from an earlier turn (e.g. a kitchen id to fetch a menu), call the tools again — searchKitchens

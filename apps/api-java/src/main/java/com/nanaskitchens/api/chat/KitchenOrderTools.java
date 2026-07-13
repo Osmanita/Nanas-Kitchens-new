@@ -6,6 +6,8 @@ import com.nanaskitchens.api.orders.OrdersService;
 import com.nanaskitchens.api.orders.dto.CreateOrderRequest;
 import java.util.List;
 import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.web.server.ResponseStatusException;
@@ -17,6 +19,8 @@ import tools.jackson.databind.json.JsonMapper;
  * alternatives on PORTIONS_CONFLICT) instead of the stream aborting.
  */
 public class KitchenOrderTools {
+
+    private static final Logger log = LoggerFactory.getLogger(KitchenOrderTools.class);
 
     private final KitchensService kitchens;
     private final OrdersService orders;
@@ -51,10 +55,13 @@ public class KitchenOrderTools {
                                     + "Omit to list all cuisines.")
                     String cuisine) {
         if (lat != null && lng != null) {
-            return guarded(() -> kitchens.search(lat, lng, cuisine));
+            return guarded(() -> nearbyOrDemo(lat, lng, cuisine));
         }
         if (location != null && !location.isBlank()) {
-            return guarded(() -> kitchens.searchByLocation(location, cuisine));
+            return guarded(() -> {
+                List<?> results = kitchens.searchByLocation(location, cuisine);
+                return results.isEmpty() ? demoFallback(cuisine) : results;
+            });
         }
         if (lat == null || lng == null) {
             return jsonMapper.writeValueAsString(Map.of(
@@ -62,6 +69,21 @@ public class KitchenOrderTools {
                     "message", "Ask the user for their city or coordinates, then search again."));
         }
         return guarded(() -> kitchens.search(lat, lng, cuisine));
+    }
+
+    /** Keep the demo conversational when the browser's real location has no local listings. */
+    private Object nearbyOrDemo(double lat, double lng, String cuisine) {
+        List<?> results = kitchens.search(lat, lng, cuisine);
+        return results.isEmpty() ? demoFallback(cuisine) : results;
+    }
+
+    private Map<String, Object> demoFallback(String cuisine) {
+        // Powell, OH 43065 — the checked-in demo kitchens live around this point.
+        return Map.of(
+                "results", kitchens.search(40.1578, -83.0752, cuisine),
+                "fallbackLocation", "43065 (Powell, OH)",
+                "message", "No matching kitchens are currently listed near the browser location. "
+                        + "Showing the seeded demo marketplace instead.");
     }
 
     @Tool(description = "Get the published daily menu for a kitchen.")
@@ -111,6 +133,7 @@ public class KitchenOrderTools {
         } catch (RuntimeException e) {
             // e.g. a stale/guessed UUID hitting a uuid column. Give the model something it can
             // recover from (re-fetch ids and retry) instead of aborting the tool call.
+            log.warn("Tool call failed (model likely used a stale/guessed id): {}", e.toString());
             return jsonMapper.writeValueAsString(Map.of(
                     "error", "TOOL_ERROR",
                     "message", "Invalid or stale ids. Call searchKitchens and getMenu again to refresh, then retry."));
