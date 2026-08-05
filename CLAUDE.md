@@ -211,6 +211,14 @@ rollover job'ın işi DEĞİL (o sadece "hiç menüsü olmayan" günleri dolduru
 
 ## Bilinen eksikler / sıradaki adaylar
 
+- **[SONRAKI OTURUM] "Rate restaurant" — Osman istedi (2026-08-05), henüz konuşulmadı.**
+  ⚠️ Önce şunu bilerek başla: mutfak puanlama zaten VAR — `/orders/[id]` sayfasında
+  `ReviewCard` bileşeni (yıldız puanı + yorum, `POST /kitchens/{id}/reviews`,
+  `GET /orders/{id}/review`), ama SADECE tamamlanmış (`completed`) bir siparişten sonra,
+  o sipariş detay sayfasına gidip görünüyor. Osman'ın kastettiği muhtemelen bu değil —
+  başka bir yerden (mutfağın kendi genel sayfası `/kitchens/[id]`'den mi, sipariş
+  geçmişinden mi, mutfak listesi kartından mı?) puanlama/rating erişimi istiyor olabilir.
+  Yarın kapsamı netleştirip ona göre uygula.
 - Gerçek ödeme (Stripe Connect satıcı ödemeleri), gerçek DoorDash/Grubhub, gerçek
   push/email bildirim kanalları (FCM/SES) — hepsi mock.
 - `apps/api` (NestJS) ve `apps/mcp-server`'da hiç test yok (apps/api artık "referans",
