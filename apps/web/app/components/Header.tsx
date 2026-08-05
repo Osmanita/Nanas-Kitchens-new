@@ -31,82 +31,99 @@ export default function Header() {
   }, []);
 
   return (
-    <header
-      style={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        padding: "14px 24px",
-        background: "#fff",
-        borderBottom: "1px solid var(--brand-border)",
-      }}
-    >
-      <Link href="/" style={{ textDecoration: "none", display: "flex", alignItems: "baseline", gap: 6 }}>
-        <span style={{ fontSize: 22, fontWeight: 800, color: "var(--brand-green)" }}>Nanas&rsquo;</span>
-        <span style={{ fontSize: 22, fontWeight: 800, color: "var(--brand-orange)" }}>Kitchens</span>
-      </Link>
-      <nav style={{ display: "flex", alignItems: "center", gap: 18, fontSize: 15 }}>
-        <Link href="/">Home</Link>
-        <Link href="/chat">Chat</Link>
-        {session?.role === "buyer" && <Link href="/orders">My Orders</Link>}
-        {session?.role === "seller" && <Link href="/seller/orders">Orders</Link>}
-        {session?.role === "seller" && <Link href="/seller/menu">My Menu</Link>}
-        {session?.role === "seller" && <Link href="/seller/kitchen">My Kitchen</Link>}
-        {session?.role === "seller" && <Link href="/seller/earnings">Earnings</Link>}
-        {session?.role === "inspector" && <Link href="/inspector/visits">Visits</Link>}
-        {session?.role === "admin" && <Link href="/admin">Admin</Link>}
-        {session ? (
-          <>
-            <NotificationBell session={session} />
-            <span
-              style={{
-                background: "var(--brand-green)",
-                color: "#fff",
-                borderRadius: 999,
-                padding: "3px 12px",
-                fontSize: 13,
-                textTransform: "capitalize",
-              }}
-            >
-              {session.role}
-            </span>
-            <button
-              onClick={() => {
-                logout();
-                router.push("/");
-              }}
-              style={{
-                background: "transparent",
-                border: "1px solid var(--brand-border)",
-                borderRadius: 8,
-                padding: "6px 14px",
-                cursor: "pointer",
-                fontSize: 14,
-              }}
-            >
-              Log out
-            </button>
-          </>
-        ) : (
-          <>
-            <Link href="/login">Log in</Link>
-            <Link
-              href="/register"
-              style={{
-                background: "var(--brand-orange)",
-                color: "#fff",
-                borderRadius: 8,
-                padding: "8px 16px",
-                textDecoration: "none",
-                fontWeight: 600,
-              }}
-            >
-              Sign up
+    <>
+      <header
+        className="island-nav"
+        style={{ maxWidth: 1100, margin: "0 auto", flexWrap: "wrap", rowGap: 10 }}
+      >
+        <Link href="/" style={{ textDecoration: "none", display: "flex", alignItems: "baseline", gap: 6 }}>
+          <span style={{ fontSize: 19, fontWeight: 800, color: "var(--text)" }}>Nanas&rsquo;</span>
+          <span className="hero-em" style={{ fontSize: 19, fontWeight: 800 }}>
+            Kitchens
+          </span>
+        </Link>
+        <nav style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 14.5 }}>
+          <Link href="/" className="chip" style={{ border: "none", background: "transparent" }}>
+            Home
+          </Link>
+          <Link href="/chat" className="chip" style={{ border: "none", background: "transparent" }}>
+            Chat
+          </Link>
+          {session?.role === "buyer" && (
+            <Link href="/orders" className="chip" style={{ border: "none", background: "transparent" }}>
+              My Orders
             </Link>
-          </>
-        )}
-      </nav>
-    </header>
+          )}
+          {session?.role === "seller" && (
+            <>
+              <Link href="/seller/orders" className="chip" style={{ border: "none", background: "transparent" }}>
+                Orders
+              </Link>
+              <Link href="/seller/menu" className="chip" style={{ border: "none", background: "transparent" }}>
+                My Menu
+              </Link>
+              <Link href="/seller/kitchen" className="chip" style={{ border: "none", background: "transparent" }}>
+                My Kitchen
+              </Link>
+              <Link href="/seller/earnings" className="chip" style={{ border: "none", background: "transparent" }}>
+                Earnings
+              </Link>
+            </>
+          )}
+          {session?.role === "inspector" && (
+            <Link href="/inspector/visits" className="chip" style={{ border: "none", background: "transparent" }}>
+              Visits
+            </Link>
+          )}
+          {session?.role === "admin" && (
+            <Link href="/admin" className="chip" style={{ border: "none", background: "transparent" }}>
+              Admin
+            </Link>
+          )}
+
+          {session ? (
+            <>
+              <NotificationBell session={session} />
+              <span
+                style={{
+                  background: "var(--accent-soft)",
+                  color: "var(--accent)",
+                  borderRadius: 999,
+                  padding: "4px 12px",
+                  fontSize: 12.5,
+                  fontWeight: 700,
+                  textTransform: "capitalize",
+                }}
+              >
+                {session.role}
+              </span>
+              <button
+                onClick={() => {
+                  logout();
+                  router.push("/");
+                }}
+                className="btn-ghost"
+                style={{ padding: "7px 16px", fontSize: 13.5 }}
+              >
+                Log out
+              </button>
+            </>
+          ) : (
+            <>
+              <Link href="/login" className="chip" style={{ border: "none", background: "transparent" }}>
+                Log in
+              </Link>
+              <Link href="/register" className="btn btn-primary" style={{ padding: "9px 20px", fontSize: 14 }}>
+                Sign up
+              </Link>
+            </>
+          )}
+        </nav>
+      </header>
+      {/* Reserves the space the fixed header would otherwise cover — a plain spacer
+          div rather than scroll-margin since the header height varies with nav wrapping. */}
+      <div style={{ height: 78 }} aria-hidden="true" />
+    </>
   );
 }
 

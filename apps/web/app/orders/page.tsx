@@ -6,7 +6,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { apiFetch, getSession, Session } from "../../lib/api";
+import { apiFetch, ensureSession, Session } from "../../lib/api";
 import { CUISINE_ICONS } from "../../lib/cuisines";
 import { money } from "../../lib/cart";
 
@@ -43,9 +43,10 @@ export default function OrdersPage() {
   const [orders, setOrders] = useState<OrderRow[] | null | undefined>(undefined);
 
   useEffect(() => {
-    const s = getSession();
-    setSession(s);
-    if (!s) router.replace("/login?next=/orders");
+    ensureSession().then((s) => {
+      setSession(s);
+      if (!s) router.replace("/login?next=/orders");
+    });
   }, [router]);
 
   useEffect(() => {
@@ -168,7 +169,29 @@ function OrderCard({ order }: { order: OrderRow }) {
         </span>
         {needsReview && <span className="badge hygiene">★ Rate this order</span>}
         {order.deliveryTrackingUrl && ACTIVE.has(order.status) && (
-          <span style={{ fontSize: 12, color: "var(--brand-blue, #0081c8)" }}>Courier on the way →</span>
+          <span
+            role="link"
+            tabIndex={0}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              window.open(order.deliveryTrackingUrl!, "_blank", "noopener,noreferrer");
+            }}
+            onKeyDown={(e) => {
+              if (e.key !== "Enter" && e.key !== " ") return;
+              e.preventDefault();
+              e.stopPropagation();
+              window.open(order.deliveryTrackingUrl!, "_blank", "noopener,noreferrer");
+            }}
+            style={{
+              fontSize: 12,
+              color: "var(--brand-blue, #0081c8)",
+              textDecoration: "underline",
+              cursor: "pointer",
+            }}
+          >
+            Courier on the way →
+          </span>
         )}
       </div>
     </Link>

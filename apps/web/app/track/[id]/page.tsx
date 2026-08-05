@@ -1,5 +1,3 @@
-import Link from "next/link";
-
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
 
 interface TrackInfo {
@@ -35,14 +33,6 @@ export default async function TrackPage({ params }: { params: Promise<{ id: stri
 
   return (
     <main style={{ maxWidth: 560, margin: "0 auto", padding: "14px 20px 60px" }}>
-      <nav className="island-nav" style={{ maxWidth: 420, margin: "0 auto" }}>
-        <Link href="/" style={{ fontWeight: 700, fontSize: 16, letterSpacing: "-0.02em" }}>
-          Nanas&rsquo; Kitchens
-        </Link>
-        <Link href="/chat" className="btn btn-primary" style={{ padding: "8px 18px", fontSize: 14 }}>
-          Order
-        </Link>
-      </nav>
 
       {!info ? (
         <div className="fade-up" style={{ textAlign: "center", marginTop: "20vh" }}>

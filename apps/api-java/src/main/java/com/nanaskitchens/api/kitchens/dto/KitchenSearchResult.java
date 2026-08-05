@@ -10,5 +10,8 @@ public record KitchenSearchResult(
         Integer hygieneScore,
         int portionsLeftToday,
         /** Cover image: kitchen's own photo, else the freshest dish photo (cards look tasty, not flags). */
-        String photo) {
+        String photo,
+        /** Seller-written blurb (e.g. "Home-style Turkish classics: manti, dolma, fresh pide.") —
+         * lets the chat agent describe a kitchen without inventing menu details it hasn't fetched. */
+        String description) {
 }

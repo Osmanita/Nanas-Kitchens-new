@@ -43,6 +43,16 @@ export function getSession(): Session | null {
   }
 }
 
+/** Like getSession(), but attempts a silent refresh first when the access token has expired
+ * locally — page guards call this so an expired-but-refreshable session doesn't bounce the
+ * user to /login for no reason (getSession() alone only checks the local exp claim). */
+export async function ensureSession(): Promise<Session | null> {
+  const s = getSession();
+  if (s) return s;
+  if (await tryRefresh()) return getSession();
+  return null;
+}
+
 async function tryRefresh(): Promise<boolean> {
   const refreshToken = typeof window === "undefined" ? null : localStorage.getItem(REFRESH_KEY);
   if (!refreshToken) return false;

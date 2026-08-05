@@ -5,7 +5,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { apiFetch, getSession, Session } from "../../../lib/api";
+import { apiFetch, ensureSession, Session } from "../../../lib/api";
 import { CUISINE_ICONS } from "../../../lib/cuisines";
 
 export interface Visit {
@@ -26,9 +26,10 @@ export default function InspectorVisitsPage() {
   const [visits, setVisits] = useState<Visit[] | undefined>(undefined);
 
   useEffect(() => {
-    const s = getSession();
-    setSession(s);
-    if (!s) router.replace("/login?next=/inspector/visits");
+    ensureSession().then((s) => {
+      setSession(s);
+      if (!s) router.replace("/login?next=/inspector/visits");
+    });
   }, [router]);
 
   useEffect(() => {

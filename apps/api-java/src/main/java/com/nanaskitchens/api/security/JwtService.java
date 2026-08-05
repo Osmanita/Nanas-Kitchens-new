@@ -22,7 +22,7 @@ public class JwtService {
 
     public JwtService(
             @Value("${app.jwt.secret}") String secret,
-            @Value("${app.jwt.access-token-ttl-minutes:15}") long accessTokenTtlMinutes) {
+            @Value("${app.jwt.access-token-ttl-minutes:480}") long accessTokenTtlMinutes) {
         byte[] secretBytes = secret.getBytes(StandardCharsets.UTF_8);
         if (secretBytes.length < 32) {
             throw new IllegalStateException(

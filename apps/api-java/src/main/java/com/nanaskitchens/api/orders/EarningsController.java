@@ -1,6 +1,7 @@
 package com.nanaskitchens.api.orders;
 
 import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -75,11 +76,16 @@ public class EarningsController {
             }
         }
 
-        // Last 14 days of completed payout, oldest→newest, for a simple bar chart.
+        // Last 14 days of completed payout, oldest→newest, for a simple bar chart. UTC
+        // "today" throughout — CURRENT_DATE would use the JDBC session's local timezone
+        // (see CLAUDE.md's daily-menu-trap; same bug class as KitchensService.search).
         List<Map<String, Object>> daily = db.sql("""
                 SELECT (d::date)::text AS day,
                        COALESCE(SUM(o."totalCents" - o."commissionCents"),0)::bigint AS net
-                FROM generate_series(CURRENT_DATE - INTERVAL '13 days', CURRENT_DATE, INTERVAL '1 day') d
+                FROM generate_series(
+                       (now() AT TIME ZONE 'UTC')::date - INTERVAL '13 days',
+                       (now() AT TIME ZONE 'UTC')::date,
+                       INTERVAL '1 day') d
                 LEFT JOIN "Order" o
                   ON o."kitchenId" = :kitchenId AND o.status = 'completed'
                   AND date_trunc('day', o."createdAt") = d
@@ -128,7 +134,7 @@ public class EarningsController {
         result.put("upcoming", upcoming);
         result.put("daily", daily);
         result.put("recent", recent);
-        result.put("today", LocalDate.now().toString());
+        result.put("today", LocalDate.now(ZoneOffset.UTC).toString());
         return result;
     }
 

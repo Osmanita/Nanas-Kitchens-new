@@ -65,7 +65,9 @@ app:
     # Shared with the NestJS service's JWT_SECRET so access tokens are valid on both
     # backends during the migration. Must be >= 32 bytes (HS256 key requirement).
     secret: ${JWT_SECRET:please-change-this-jwt-secret-in-prod-32b}
-    access-token-ttl-minutes: 15
+    # 8h covers a full dev/testing session without re-login; refresh-token-ttl-days
+    # below is what actually bounds session length if this ever needs tightening.
+    access-token-ttl-minutes: 480
     refresh-token-ttl-days: 30
   address-enc-key: ${ADDRESS_ENC_KEY:32-byte-hex-key-change-me-0000000000}
   delivery:

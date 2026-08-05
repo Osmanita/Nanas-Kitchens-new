@@ -292,6 +292,8 @@ model Order {
   fulfillment     Fulfillment
   totalCents      Int
   commissionCents Int         @default(0)
+  deliveryFeeCents Int        @default(0)
+  tipCents        Int         @default(0)
   paymentIntentId String?
   // FR21: set when a captured payment is automatically refunded on decline/cancel
   refundId        String?

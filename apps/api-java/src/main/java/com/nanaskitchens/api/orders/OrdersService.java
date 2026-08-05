@@ -271,6 +271,14 @@ public class OrdersService {
                     "ADDRESS_NOT_FOUND: could not locate this address on the map. Ask the buyer "
                             + "for a clearer address including the town/city name.");
         }
+        // Cheap, clearer rejection before the distance math — every kitchen is US-based, so a
+        // non-US drop-off would fail the radius check anyway, but with a confusing "X thousand
+        // miles away" message instead of telling the buyer plainly why it can't work.
+        if (point.countryCode() != null && !"us".equalsIgnoreCase(point.countryCode())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "ADDRESS_OUTSIDE_US: delivery is only available within the United States right now. "
+                            + "Offer pickup, or ask for a US delivery address.");
+        }
         Double meters = db.sql("""
                 SELECT ST_Distance(geo, ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geography)
                 FROM "Kitchen" WHERE id = :kitchenId AND geo IS NOT NULL
@@ -486,15 +494,24 @@ public class OrdersService {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN);
         }
         return db.sql("""
-                SELECT o.id, o.status, o."readySlot", o.fulfillment, o."totalCents", o."createdAt",
+                SELECT o.id, o.status, o."readySlot", o.fulfillment, o."totalCents",
+                       o."deliveryFeeCents", o."tipCents", o."createdAt",
                        dj.provider AS delivery_provider, dj.status AS delivery_status,
                        dj."trackingUrl" AS delivery_tracking_url,
+                       u.email AS buyer_email, u.phone AS buyer_phone,
                        (SELECT string_agg(d.name || ' x' || oi.qty, ', ' ORDER BY d.name)
                         FROM "OrderItem" oi
                         JOIN "MenuItem" mi ON mi.id = oi."menuItemId"
                         JOIN "Dish" d ON d.id = mi."dishId"
-                        WHERE oi."orderId" = o.id) AS items_summary
+                        WHERE oi."orderId" = o.id) AS items_summary,
+                       (SELECT json_agg(json_build_object('name', d.name, 'qty', oi.qty, 'photo', d.photo)
+                                         ORDER BY d.name)
+                        FROM "OrderItem" oi
+                        JOIN "MenuItem" mi ON mi.id = oi."menuItemId"
+                        JOIN "Dish" d ON d.id = mi."dishId"
+                        WHERE oi."orderId" = o.id) AS items_json
                 FROM "Order" o
+                JOIN "User" u ON u.id = o."buyerId"
                 LEFT JOIN "DeliveryJob" dj ON dj."orderId" = o.id
                 WHERE o."kitchenId" = :kitchenId
                   AND (:status::text IS NULL OR o.status::text = :status)
@@ -510,8 +527,13 @@ public class OrdersService {
                     row.put("readySlot", rs.getTimestamp("readySlot").toLocalDateTime());
                     row.put("fulfillment", rs.getString("fulfillment"));
                     row.put("totalCents", rs.getInt("totalCents"));
+                    row.put("deliveryFeeCents", rs.getInt("deliveryFeeCents"));
+                    row.put("tipCents", rs.getInt("tipCents"));
                     row.put("createdAt", rs.getTimestamp("createdAt").toLocalDateTime());
                     row.put("itemsSummary", rs.getString("items_summary"));
+                    row.put("items", parseItemsJson(rs.getString("items_json")));
+                    row.put("buyerEmail", rs.getString("buyer_email"));
+                    row.put("buyerPhone", rs.getString("buyer_phone"));
                     // Story 4.1 board — delivery-partner status chip (null for pickup / pre-ready)
                     row.put("deliveryProvider", rs.getString("delivery_provider"));
                     row.put("deliveryStatus", rs.getString("delivery_status"));
@@ -519,6 +541,12 @@ public class OrdersService {
                     return row;
                 })
                 .list();
+    }
+
+    /** items_json is a Postgres json_agg(...) array, null when an order somehow has no lines. */
+    private List<Map<String, Object>> parseItemsJson(String itemsJson) {
+        if (itemsJson == null) return List.of();
+        return jsonMapper.readValue(itemsJson, List.class);
     }
 
     /** Buyer order history — mirrors listForKitchen but scoped to the buyer's own orders. */

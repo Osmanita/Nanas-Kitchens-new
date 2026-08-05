@@ -210,12 +210,14 @@ public class KitchensService {
     public List<KitchenSearchResult> search(double lat, double lng, String cuisine) {
         double radiusMeters = SEARCH_RADIUS_MILES * METERS_PER_MILE;
         return db.sql("""
-                SELECT k.id, k.name, k."cuisineTag", k."ratingAvg", k."hygieneScoreTotal" AS hygiene,
+                SELECT k.id, k.name, k."cuisineTag", k.description, k."ratingAvg",
+                       k."hygieneScoreTotal" AS hygiene,
                        ST_Distance(k.geo, ST_SetSRID(ST_MakePoint(:lng, :lat),4326)::geography) AS meters,
                        COALESCE((
                          SELECT SUM(mi."portionsRemaining") FROM "MenuItem" mi
                          JOIN "MenuDay" md ON md.id = mi."menuDayId"
-                         WHERE md."kitchenId" = k.id AND md.status = 'published' AND md.date = CURRENT_DATE
+                         WHERE md."kitchenId" = k.id AND md.status = 'published'
+                           AND md.date = (now() AT TIME ZONE 'UTC')::date
                        ), 0)::int AS portions_left,
                        COALESCE(k.photos[1], (
                          SELECT d.photo FROM "MenuDay" md
@@ -244,7 +246,8 @@ public class KitchensService {
                         rs.getObject("ratingAvg", Double.class),
                         rs.getObject("hygiene", Integer.class),
                         rs.getInt("portions_left"),
-                        rs.getString("photo")))
+                        rs.getString("photo"),
+                        rs.getString("description")))
                 .list();
     }
 
