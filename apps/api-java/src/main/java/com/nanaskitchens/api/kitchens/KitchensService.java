@@ -210,7 +210,7 @@ public class KitchensService {
     public List<KitchenSearchResult> search(double lat, double lng, String cuisine) {
         double radiusMeters = SEARCH_RADIUS_MILES * METERS_PER_MILE;
         return db.sql("""
-                SELECT k.id, k.name, k."cuisineTag", k.description, k."ratingAvg",
+                SELECT k.id, k.name, k."cuisineTag", k.description, k."ratingAvg", k."ratingCount",
                        k."hygieneScoreTotal" AS hygiene,
                        ST_Distance(k.geo, ST_SetSRID(ST_MakePoint(:lng, :lat),4326)::geography) AS meters,
                        COALESCE((
@@ -244,6 +244,7 @@ public class KitchensService {
                         rs.getString("cuisineTag"),
                         Math.round(rs.getDouble("meters") / METERS_PER_MILE * 10) / 10.0,
                         rs.getObject("ratingAvg", Double.class),
+                        rs.getInt("ratingCount"),
                         rs.getObject("hygiene", Integer.class),
                         rs.getInt("portions_left"),
                         rs.getString("photo"),

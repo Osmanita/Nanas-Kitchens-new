@@ -1,6 +1,8 @@
 package com.nanaskitchens.api.reviews;
 
 import com.nanaskitchens.api.notifications.NotificationsService;
+import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -13,11 +15,14 @@ import org.springframework.web.server.ResponseStatusException;
 
 /**
  * Story 6.1 (FR16): a buyer rates a kitchen 1-5 only after a completed order, once per
- * order. Kitchen.ratingAvg/ratingCount are recomputed from the Review table on insert so
- * the search results and profile badge stay consistent with the raw rows.
+ * order, within {@link #REVIEW_WINDOW_MONTHS} months of placing it. Kitchen.ratingAvg/
+ * ratingCount are recomputed from the Review table on insert so the search results and
+ * profile badge stay consistent with the raw rows.
  */
 @Service
 public class ReviewsService {
+
+    private static final int REVIEW_WINDOW_MONTHS = 6;
 
     private final JdbcClient db;
     private final NotificationsService notifications;
@@ -30,14 +35,15 @@ public class ReviewsService {
     @Transactional
     public Map<String, Object> create(
             String buyerId, String kitchenId, String orderId, int rating, String comment) {
-        record OrderRow(String buyerId, String kitchenId, String status) {
+        record OrderRow(String buyerId, String kitchenId, String status, Instant createdAt) {
         }
         OrderRow order = db.sql("""
-                SELECT "buyerId", "kitchenId", status::text AS status FROM "Order" WHERE id = :id
+                SELECT "buyerId", "kitchenId", status::text AS status, "createdAt" FROM "Order" WHERE id = :id
                 """)
                 .param("id", orderId)
                 .query((rs, n) -> new OrderRow(
-                        rs.getString("buyerId"), rs.getString("kitchenId"), rs.getString("status")))
+                        rs.getString("buyerId"), rs.getString("kitchenId"), rs.getString("status"),
+                        rs.getTimestamp("createdAt").toInstant()))
                 .optional()
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "ORDER_NOT_FOUND"));
         if (!buyerId.equals(order.buyerId())) {
@@ -48,6 +54,11 @@ public class ReviewsService {
         }
         if (!"completed".equals(order.status())) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "ORDER_NOT_COMPLETED");
+        }
+        Instant reviewWindowCutoff = Instant.now().atZone(ZoneOffset.UTC)
+                .minusMonths(REVIEW_WINDOW_MONTHS).toInstant();
+        if (order.createdAt().isBefore(reviewWindowCutoff)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "REVIEW_WINDOW_EXPIRED");
         }
         Integer existing = db.sql("SELECT count(*)::int FROM \"Review\" WHERE \"orderId\" = :orderId")
                 .param("orderId", orderId)

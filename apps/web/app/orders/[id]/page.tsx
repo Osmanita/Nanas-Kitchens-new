@@ -7,6 +7,7 @@ import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { apiFetch } from "../../../lib/api";
 import { money } from "../../../lib/cart";
+import { isWithinReviewWindow, REVIEW_WINDOW_MONTHS } from "../../../lib/reviewWindow";
 
 interface OrderItem {
   id: string;
@@ -29,6 +30,7 @@ interface OrderDetail {
   fulfillment: string;
   totalCents: number;
   refundedAt: string | null;
+  createdAt: string;
   items: OrderItem[];
   kitchenId: string;
   kitchenName: string;
@@ -243,7 +245,9 @@ function ReviewCard({ order }: { order: OrderDetail }) {
         setError(
           body.message === "ALREADY_REVIEWED"
             ? "You already reviewed this order."
-            : "Could not submit your review — try again.",
+            : body.message === "REVIEW_WINDOW_EXPIRED"
+              ? `The ${REVIEW_WINDOW_MONTHS}-month window to rate this order has closed.`
+              : "Could not submit your review — try again.",
         );
         return;
       }
@@ -255,6 +259,8 @@ function ReviewCard({ order }: { order: OrderDetail }) {
 
   if (existing === undefined) return null; // still checking
 
+  const withinWindow = isWithinReviewWindow(order.createdAt);
+
   if (existing) {
     return (
       <div className="card" style={{ marginBottom: 16, textAlign: "center" }}>
@@ -265,6 +271,16 @@ function ReviewCard({ order }: { order: OrderDetail }) {
         {existing.comment && <p style={{ margin: "8px 0 0", fontStyle: "italic" }}>“{existing.comment}”</p>}
         <p style={{ margin: "8px 0 0", color: "var(--brand-muted)", fontSize: 14 }}>
           Thanks for reviewing {order.kitchenName}!
+        </p>
+      </div>
+    );
+  }
+
+  if (!withinWindow) {
+    return (
+      <div className="card" style={{ marginBottom: 16, textAlign: "center" }}>
+        <p style={{ margin: 0, color: "var(--brand-muted)", fontSize: 14 }}>
+          The {REVIEW_WINDOW_MONTHS}-month window to rate this order has closed.
         </p>
       </div>
     );

@@ -211,14 +211,16 @@ rollover job'ın işi DEĞİL (o sadece "hiç menüsü olmayan" günleri dolduru
 
 ## Bilinen eksikler / sıradaki adaylar
 
-- **[SONRAKI OTURUM] "Rate restaurant" — Osman istedi (2026-08-05), henüz konuşulmadı.**
-  ⚠️ Önce şunu bilerek başla: mutfak puanlama zaten VAR — `/orders/[id]` sayfasında
-  `ReviewCard` bileşeni (yıldız puanı + yorum, `POST /kitchens/{id}/reviews`,
-  `GET /orders/{id}/review`), ama SADECE tamamlanmış (`completed`) bir siparişten sonra,
-  o sipariş detay sayfasına gidip görünüyor. Osman'ın kastettiği muhtemelen bu değil —
-  başka bir yerden (mutfağın kendi genel sayfası `/kitchens/[id]`'den mi, sipariş
-  geçmişinden mi, mutfak listesi kartından mı?) puanlama/rating erişimi istiyor olabilir.
-  Yarın kapsamı netleştirip ona göre uygula.
+- **"Rate restaurant" kapsamı netleşti ve uygulandı (2026-08-06):** her tamamlanmış sipariş
+  `/orders/[id]`'deki `ReviewCard` üzerinden puanlanabiliyordu; buna ek olarak artık
+  **6 aylık bir puanlama penceresi** var — `ReviewsService.REVIEW_WINDOW_MONTHS` (backend,
+  `Order.createdAt` + 6 ay, `REVIEW_WINDOW_EXPIRED` hatası) ve `apps/web/lib/reviewWindow.ts`
+  (`isWithinReviewWindow`, frontend'de `orders/page.tsx`'teki "★ Rate this order" rozeti ve
+  `orders/[id]/page.tsx`'teki `ReviewCard` formu için — pencere kapandıysa form yerine kapalı
+  mesajı gösteriliyor). **Chat'in mutfak arama kartına da rating eklendi (2026-08-06):**
+  `KitchenSearchResult`'a `ratingCount` eklendi (ratingAvg zaten vardı), `SystemPrompt.java`'daki
+  kart şeması ve `apps/web/app/chat/page.tsx`'teki kart artık `★ 4.5 (12)` gösteriyor
+  (rating yoksa hiçbir şey basılmıyor, uydurma yapılmıyor).
 - Gerçek ödeme (Stripe Connect satıcı ödemeleri), gerçek DoorDash/Grubhub, gerçek
   push/email bildirim kanalları (FCM/SES) — hepsi mock.
 - `apps/api` (NestJS) ve `apps/mcp-server`'da hiç test yok (apps/api artık "referans",
@@ -230,6 +232,18 @@ rollover job'ın işi DEĞİL (o sadece "hiç menüsü olmayan" günleri dolduru
 - Kaloriler temsili dev verisi; Nominatim dev geocoder'ı (üretimde ücretli servise
   geçilecek seam hazır: GeocodingService — hem `kitchens` hem `delivery` paketinde AYRI
   birer `GeocodingService` var, karıştırma).
+
+## Backlog / brainstorm (2026-08-06)
+
+Tam liste masaüstünde `yapilacaklar-nanas-kitchens.txt`. Özet:
+- **Yapılacaklar:** chat rating'i tarayıcıda gözle kontrol et; `apps/api` (NestJS) dev script'i
+  `pnpm --parallel` ile DATABASE_URL bulamadan çöküyor (web'i etkilemiyor ama seed buradan
+  çalışıyor); Docker artık çalıştığına göre Testcontainers entegrasyon testlerini tekrar dene;
+  bağımsız buyer hesap sayfası yok; ödeme/teslimat/bildirim entegrasyonları hâlâ mock.
+- **Fikirler:** satıcının yorumlara herkese açık cevap yazabilmesi, yoruma fotoğraf ekleme,
+  "bu haftanın favorisi" rozeti, puana göre sıralama, favoriler listesi, "son siparişi tekrar
+  ver", satıcı panelinde puan trend grafiği, düşük puanda satıcıya otomatik uyarı, sağlık
+  denetimi + müşteri puanının birleşik "güven skoru", kötüye kullanılan yorumu şikayet etme.
 
 ## Test kullanıcı akışı (uçtan uca doğrulanmış)
 

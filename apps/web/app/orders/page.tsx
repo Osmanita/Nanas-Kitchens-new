@@ -9,6 +9,7 @@ import { useEffect, useState } from "react";
 import { apiFetch, ensureSession, Session } from "../../lib/api";
 import { CUISINE_ICONS } from "../../lib/cuisines";
 import { money } from "../../lib/cart";
+import { isWithinReviewWindow } from "../../lib/reviewWindow";
 
 interface OrderRow {
   id: string;
@@ -130,7 +131,8 @@ export default function OrdersPage() {
 function OrderCard({ order }: { order: OrderRow }) {
   const icon = CUISINE_ICONS[order.cuisineTag] ?? "🍽️";
   const placed = new Date(order.createdAt);
-  const needsReview = order.status === "completed" && !order.reviewed;
+  const needsReview =
+    order.status === "completed" && !order.reviewed && isWithinReviewWindow(order.createdAt);
 
   return (
     <Link

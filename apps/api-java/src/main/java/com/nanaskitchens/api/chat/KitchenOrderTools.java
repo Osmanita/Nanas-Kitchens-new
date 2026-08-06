@@ -37,7 +37,7 @@ public class KitchenOrderTools {
         this.buyerId = buyerId;
     }
 
-    @Tool(description = "Search for kitchens within 10 miles. Give either lat/lng coordinates or a city/postal-code location (for example 43065). Returns name, cuisine, distance, and live portions left.")
+    @Tool(description = "Search for kitchens within 10 miles. Give either lat/lng coordinates or a city/postal-code location (for example 43065). Returns name, cuisine, distance, live portions left, and rating (ratingAvg/ratingCount, null if no reviews yet).")
     public String searchKitchens(
             Double lat,
             Double lng,

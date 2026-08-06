@@ -52,6 +52,8 @@ interface KitchenListCard {
     portionsLeftToday: number;
     photo?: string | null;
     description?: string | null;
+    ratingAvg?: number | null;
+    ratingCount?: number | null;
   }[];
 }
 
@@ -687,7 +689,15 @@ export default function ChatPage() {
                         />
                       )}
                       <div style={{ minWidth: 0 }}>
-                        <div style={{ fontWeight: 600, fontSize: 14.5 }}>{k.name}</div>
+                        <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
+                          <div style={{ fontWeight: 600, fontSize: 14.5 }}>{k.name}</div>
+                          {k.ratingAvg != null && (
+                            <span style={{ fontSize: 12.5, color: "var(--text-2)", whiteSpace: "nowrap" }}>
+                              &#9733; {k.ratingAvg.toFixed(1)}
+                              {k.ratingCount != null && ` (${k.ratingCount})`}
+                            </span>
+                          )}
+                        </div>
                         <div style={{ fontSize: 12.5, color: "var(--text-2)", marginTop: 2 }}>
                           {k.cuisineTag[0]?.toUpperCase() + k.cuisineTag.slice(1)} &middot; {k.distanceMiles} mi
                           &middot; {soldOut ? "Sold out today" : `${k.portionsLeftToday} left`}

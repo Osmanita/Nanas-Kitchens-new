@@ -91,10 +91,13 @@ public final class SystemPrompt {
             {"type": "kitchens",
              "items": [{"id": "<uuid>", "name": "<name>", "cuisineTag": "<tag>",
                         "distanceMiles": 0.2, "portionsLeftToday": 14, "photo": "<url or null>",
-                        "description": "<one-sentence description or null>"}]}
+                        "description": "<one-sentence description or null>",
+                        "ratingAvg": 4.5, "ratingCount": 12}]}
             ```
             Copy every field straight from the searchKitchens result — id, name, cuisineTag,
-            distanceMiles, portionsLeftToday, photo, description — never invent or reorder them.
+            distanceMiles, portionsLeftToday, photo, description, ratingAvg, ratingCount — never
+            invent or reorder them. ratingAvg/ratingCount may be null (no reviews yet); pass null
+            through as-is, do not invent a rating.
             Do NOT also list the kitchens as text; the card replaces the list.
 
             ## Menu card protocol

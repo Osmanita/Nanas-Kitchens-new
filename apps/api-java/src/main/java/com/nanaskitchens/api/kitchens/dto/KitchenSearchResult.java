@@ -7,6 +7,7 @@ public record KitchenSearchResult(
         String cuisineTag,
         double distanceMiles,
         Double ratingAvg,
+        int ratingCount,
         Integer hygieneScore,
         int portionsLeftToday,
         /** Cover image: kitchen's own photo, else the freshest dish photo (cards look tasty, not flags). */
