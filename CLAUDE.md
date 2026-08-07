@@ -240,10 +240,31 @@ Tam liste masaüstünde `yapilacaklar-nanas-kitchens.txt`. Özet:
   `pnpm --parallel` ile DATABASE_URL bulamadan çöküyor (web'i etkilemiyor ama seed buradan
   çalışıyor); Docker artık çalıştığına göre Testcontainers entegrasyon testlerini tekrar dene;
   bağımsız buyer hesap sayfası yok; ödeme/teslimat/bildirim entegrasyonları hâlâ mock.
+- **[YARIN — 2026-08-07] Deployment/altyapı:** AWS üzerinden domain alınacak (Route 53); ECS
+  (Elastic Container Service) üzerine container deployment kurulacak; CI/CD deployment pipeline
+  kurulacak; bir Jenkins server ayağa kaldırılacak.
 - **Fikirler:** satıcının yorumlara herkese açık cevap yazabilmesi, yoruma fotoğraf ekleme,
   "bu haftanın favorisi" rozeti, puana göre sıralama, favoriler listesi, "son siparişi tekrar
   ver", satıcı panelinde puan trend grafiği, düşük puanda satıcıya otomatik uyarı, sağlık
   denetimi + müşteri puanının birleşik "güven skoru", kötüye kullanılan yorumu şikayet etme.
+
+## İsim / domain brainstorm (2026-08-07)
+
+"Nanas' Kitchens" şu an **placeholder isim** — 45 yaş civarı hedef kitleye eski/yaşlı
+hissettirebileceği düşünülüyor. Route 53 domain alımı isim netleşene kadar bilinçli olarak
+ertelendi (AWS ECS/ALB domain olmadan da default AWS DNS adresiyle çalışır, isim netleşince
+tek değişiklik host-bazlı routing + Route 53 kaydı olacak, mimariye dokunmaz).
+
+Yön: kültür vurgusu değil **"world" temalı** bir isim (kod tabanındaki eski çalışma adı
+`culture_eats`/CulturEats'in aksine). Aday isimler (World + X kalıbı ağırlıklı):
+- **WorldBite** — şu ana kadarki favori.
+- Diğer adaylar: WorldBites, WorldKitchens, WorldTable, WorldPlate, WorldFare,
+  OneWorldKitchen, WorldFeast, WorldPantry, WorldDish, WorldFork, WorldSupper, WorldCrave,
+  WorldPlatter, PassportKitchen (world kelimesi yok ama seyahat/keşif hissi taşıyor).
+
+Henüz kesin karar yok, domain müsaitliği kontrol edilmedi. İsim netleşince: Route 53'ten
+domain al → ECS/ALB deployment'ı kaldığı yerden devam ettir → repodaki "Nanas' Kitchens"
+referanslarını (README, seed verisi, UI metinleri) güncelle.
 
 ## Test kullanıcı akışı (uçtan uca doğrulanmış)
 
