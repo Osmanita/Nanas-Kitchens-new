@@ -19,6 +19,14 @@ Demo pazaryeri artık **Powell, Ohio (43065)** merkezli (bkz. Seed verisi).
 
 ## Çalıştırma (Windows dahil)
 
+**Kısayol: `.\dev.cmd`** (ya da `.\scripts\dev.ps1`) — aşağıdaki adımların hepsini sırayla
+yapar: Docker'ı gerekiyorsa başlatır, `docker compose up -d`, Postgres hazır olana kadar bekler,
+`.env`'i process'e export eder (hem Spring hem NestJS bundan faydalanır), `prisma migrate deploy`
+çalıştırır, portlarda kalmış eski dev server'ları öldürür, sonra java-api/web/mcp'yi ayrı
+pencerelerde başlatır. Flag'ler: `-Install` (pnpm install), `-Seed`, `-WithNest` (eski NestJS
+API'yi de başlat), `-SkipMigrate`, `-Stop` (her şeyi durdur + container'ları kaldır).
+Elle yapmak istersen adımlar şöyle:
+
 ```powershell
 # Node.js/pnpm yoksa: winget install OpenJS.NodeJS.LTS, sonra `npm install -g pnpm`
 # (corepack Program Files'a admin izni ister — npm ile kurmak daha az sürtünmeli)
