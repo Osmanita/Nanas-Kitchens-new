@@ -179,10 +179,12 @@ public class OrdersService {
         db.sql("""
                 INSERT INTO "Order"
                   (id, "buyerId", "kitchenId", "menuDayId", status, "readySlot", fulfillment,
-                   "totalCents", "commissionCents", "deliveryFeeCents", "tipCents", "paymentIntentId", "idempotencyKey")
+                   "totalCents", "commissionCents", "deliveryFeeCents", "tipCents", "paymentIntentId",
+                   "idempotencyKey", "deliveryAddressEncrypted")
                 VALUES
                   (:id, :buyerId, :kitchenId, :menuDayId, :status, :readySlot, :fulfillment,
-                   :totalCents, :commissionCents, :deliveryFeeCents, :tipCents, :paymentIntentId, :idempotencyKey)
+                   :totalCents, :commissionCents, :deliveryFeeCents, :tipCents, :paymentIntentId,
+                   :idempotencyKey, :deliveryAddressEncrypted)
                 """)
                 .param("id", orderId)
                 .param("buyerId", buyerId)
@@ -197,6 +199,11 @@ public class OrdersService {
                 .param("tipCents", courierTipCents)
                 .param("paymentIntentId", intent.id())
                 .param("idempotencyKey", idempotencyKey)
+                // NFR5: the drop-off address is what the courier is dispatched to, so it has to
+                // survive the request. Stored encrypted like Kitchen.addressEncrypted; encrypt()
+                // dereferences its argument, so pickup orders store null rather than encrypting it.
+                .param("deliveryAddressEncrypted",
+                        isDelivery ? addressCrypto.encrypt(deliveryAddress) : null)
                 .update();
         for (CreateOrderRequest.Item item : input.items()) {
             db.sql("""
