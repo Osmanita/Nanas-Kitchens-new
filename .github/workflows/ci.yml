@@ -27,6 +27,13 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: pnpm }
       - run: pnpm install --frozen-lockfile=false
+      # @prisma/client's postinstall runs from the hoisted workspace root and cannot find
+      # apps/api/prisma/schema.prisma, so it emits a stub client with no model types and
+      # apps/api then fails to typecheck ("Property 'dish' does not exist on type '{}'",
+      # implicit any on $transaction / $queryRaw / map callbacks). "migrate deploy" does
+      # not generate either. Locally this is masked by a client generated during earlier
+      # work that stays in node_modules, so the break only ever shows up in CI.
+      - run: pnpm --filter api prisma:generate
       - run: pnpm --filter api prisma:migrate:deploy
       - run: pnpm lint
       - run: pnpm build
