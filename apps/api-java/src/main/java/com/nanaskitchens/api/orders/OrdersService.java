@@ -49,6 +49,9 @@ public class OrdersService {
     // "declined" belongs here: decline() already restores the portions and refunds, so letting
     // cancel() run again on a declined order would restore the stock twice and refund twice.
     private static final Set<String> FINAL_STATUSES = Set.of("completed", "cancelled", "declined");
+    // Orders that ended without the buyer getting food. An idempotency replay must not hand
+    // one of these back as a confirmed order (see place()).
+    private static final Set<String> DEAD_STATUSES = Set.of("cancelled", "declined");
 
     /** Story 4.1 seller transitions: current status -> allowed next statuses. */
     private static final Map<String, Set<String>> SELLER_TRANSITIONS = Map.of(
@@ -195,7 +198,14 @@ public class OrdersService {
                 // instead of quietly starting another.
                 throw new ResponseStatusException(HttpStatus.CONFLICT, "PAYMENT_IN_PROGRESS");
             }
-            return Map.of("confirmed", true, "order", existing);
+            if (!DEAD_STATUSES.contains(existing.status())) {
+                return Map.of("confirmed", true, "order", existing);
+            }
+            // The earlier attempt was cancelled or declined, so this is a buyer deliberately
+            // re-ordering, not a duplicate submit. Replaying it would hand back a dead order
+            // as "confirmed" and place nothing. Give the new order a key of its own - the
+            // dead one still holds the derived key, and that column is UNIQUE.
+            idempotencyKey = idempotencyKey + ":" + UUID.randomUUID();
         }
 
         // Atomic: decrement + order in one transaction (Story 2.3 / architecture Workflow 1).
