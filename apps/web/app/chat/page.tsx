@@ -370,7 +370,10 @@ export default function ChatPage() {
           }
           // The card renders the data; don't also show the raw JSON in the bubble.
           if (handled) assistantText = assistantText.replace(blockMatch[0], "").trim();
-        } catch {}
+        } catch {
+          // Not one of the structured cards - leave the block in the text and render it
+          // normally. A malformed card must never break the whole message.
+        }
       }
 
       setMessages([...next, { role: "assistant", content: assistantText }]);

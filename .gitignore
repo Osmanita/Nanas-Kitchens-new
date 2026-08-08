@@ -23,3 +23,9 @@ hs_err_pid*
 # Local tooling state
 .claude/
 *.log
+
+# tsc emits to dist/ (see packages/core/tsconfig.json); stale output used to sit next to
+# the sources here and shipped an outdated copy of crypto.ts into git.
+packages/core/src/*.js
+packages/core/src/*.js.map
+packages/core/src/*.d.ts

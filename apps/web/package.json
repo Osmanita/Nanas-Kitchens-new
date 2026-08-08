@@ -4,7 +4,7 @@
   "scripts": {
     "dev": "next dev -p 3000",
     "build": "next build",
-    "lint": "next lint || echo lint-skip",
+    "lint": "eslint .",
     "test": "vitest run"
   },
   "dependencies": {

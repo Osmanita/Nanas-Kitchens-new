@@ -5,11 +5,17 @@
     "dev": "pnpm --parallel --filter './apps/*' dev",
     "build": "pnpm -r build",
     "test": "pnpm -r test",
-    "lint": "pnpm -r lint"
+    "lint": "eslint ."
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@next/eslint-plugin-next": "^16.3.0",
+    "eslint": "^10.8.1",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "globals": "^17.9.0",
+    "prettier": "^3.3.0",
     "typescript": "^5.6.0",
-    "prettier": "^3.3.0"
+    "typescript-eslint": "^8.66.0"
   },
   "packageManager": "pnpm@9.12.0"
 }

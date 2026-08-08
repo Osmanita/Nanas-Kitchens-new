@@ -175,12 +175,10 @@ export class AgentService {
       });
 
       const toolUseBlocks: Anthropic.ToolUseBlock[] = [];
-      let assistantText = "";
 
       for await (const event of stream) {
         if (event.type === "content_block_delta") {
           if (event.delta.type === "text_delta") {
-            assistantText += event.delta.text;
             sendEvent({ type: "text", delta: event.delta.text });
           }
         } else if (event.type === "content_block_stop") {
