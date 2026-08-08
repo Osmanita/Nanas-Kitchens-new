@@ -49,7 +49,10 @@ public class SecurityConfig {
                         .requestMatchers(org.springframework.http.HttpMethod.GET,
                                 "/kitchens/search", "/kitchens/*", "/kitchens/*/menu",
                                 "/kitchens/*/portions/stream", "/kitchens/*/reviews", "/kitchens/*/polls",
-                                "/kitchens/*/health-reports", "/files/*")
+                                "/kitchens/*/health-reports", "/files/*",
+                                // courier tracking links are opened by people who are not logged in;
+                                // DeliveryController exposes progress only, no buyer identity or address
+                                "/track/*")
                         .permitAll()
                         // partner callbacks authenticate via their own signatures, not JWT
                         // (delivery: HMAC; stripe: Stripe-Signature header)
