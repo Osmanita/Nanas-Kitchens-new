@@ -220,6 +220,7 @@ export default function ChatPage() {
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [pendingSummary, setPendingSummary] = useState<OrderSummary | null>(null);
+  const [confirming, setConfirming] = useState(false);
   const [pendingMenu, setPendingMenu] = useState<MenuCard | null>(null);
   const [pendingKitchens, setPendingKitchens] = useState<KitchenListCard | null>(null);
   const [confirmedOrder, setConfirmedOrder] = useState<ConfirmedOrder | null>(null);
@@ -406,6 +407,19 @@ export default function ChatPage() {
   }
 
   async function confirmOrder() {
+    // The card stays on screen for the whole round trip (pendingSummary is only cleared
+    // after the await), so without this guard a second click posts a second order - another
+    // charge and another stock decrement. The checkout page already gates itself this way.
+    if (!pendingSummary || confirming) return;
+    setConfirming(true);
+    try {
+      await postConfirmedOrder();
+    } finally {
+      setConfirming(false);
+    }
+  }
+
+  async function postConfirmedOrder() {
     if (!pendingSummary) return;
     const draft = { ...pendingSummary.draft, confirm: true };
     const res = await apiFetch(`/orders`, {
@@ -980,10 +994,21 @@ export default function ChatPage() {
               Do you confirm this order?
             </p>
             <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
-              <button onClick={confirmOrder} className="btn btn-primary" style={{ padding: "10px 22px" }}>
-                Confirm order
+              <button
+                onClick={confirmOrder}
+                disabled={confirming}
+                aria-busy={confirming}
+                className="btn btn-primary"
+                style={{ padding: "10px 22px" }}
+              >
+                {confirming ? "Placing order…" : "Confirm order"}
               </button>
-              <button onClick={() => setPendingSummary(null)} className="btn btn-ghost" style={{ padding: "9px 18px" }}>
+              <button
+                onClick={() => setPendingSummary(null)}
+                disabled={confirming}
+                className="btn btn-ghost"
+                style={{ padding: "9px 18px" }}
+              >
                 Cancel
               </button>
             </div>

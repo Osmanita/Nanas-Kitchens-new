@@ -11,17 +11,24 @@ import com.nanaskitchens.api.kitchens.dto.MenuDayResponse;
 import com.nanaskitchens.api.orders.dto.CreateOrderRequest;
 import com.nanaskitchens.api.orders.dto.OrderDetailResponse;
 import com.nanaskitchens.api.orders.dto.OrderSummary;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeParseException;
+import java.time.temporal.ChronoUnit;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
@@ -164,6 +171,33 @@ public class OrdersService {
             return Map.of("confirmed", false, "summary", summary); // FR15: summary first, no side effects
         }
 
+        // A fresh UUID for the idempotency key meant a double submit - two clicks, a retried
+        // request - looked like a brand new order to both us and Stripe: two orders, two
+        // charges, stock decremented twice. Deriving the key from the request makes the retry
+        // collide with the first attempt, so Stripe returns the original PaymentIntent and the
+        // UNIQUE constraint on Order.idempotencyKey refuses the second row.
+        //
+        // This check MUST come before the decrement below. Returning early after decrementing
+        // would commit the decrement without an order attached and quietly leak portions -
+        // which is exactly what happened the first time this was written.
+        String idempotencyKey = idempotencyKeyFor(buyerId, input);
+        Optional<String> alreadyPlaced = db
+                .sql("SELECT id FROM \"Order\" WHERE \"idempotencyKey\" = :key AND \"buyerId\" = :buyerId")
+                .param("key", idempotencyKey)
+                .param("buyerId", buyerId)
+                .query(String.class)
+                .optional();
+        if (alreadyPlaced.isPresent()) {
+            OrderDetailResponse existing = detail(buyerId, alreadyPlaced.get());
+            if ("pending".equals(existing.status())) {
+                // The first attempt is still waiting on the buyer's PaymentIntent. Sending a
+                // second one would double-charge, so tell the client to resume that order
+                // instead of quietly starting another.
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "PAYMENT_IN_PROGRESS");
+            }
+            return Map.of("confirmed", true, "order", existing);
+        }
+
         // Atomic: decrement + order in one transaction (Story 2.3 / architecture Workflow 1).
         // The PaymentIntent is created inside the same transaction on purpose: a provider
         // failure rolls everything back, which IS the compensating restore of Story 3.3 AC3.
@@ -171,7 +205,6 @@ public class OrdersService {
         for (CreateOrderRequest.Item item : input.items()) {
             inventory.decrement(item.menuItemId(), item.qty());
         }
-        String idempotencyKey = UUID.randomUUID().toString(); // doubles as the Stripe idempotency key
         PaymentProvider.Intent intent = payments.createIntent(orderId, totalCents, idempotencyKey);
         // mock settles instantly → confirmed (pre-3.4 behaviour); stripe stays pending until
         // the webhook lands (detail() already withholds the pickup address while pending).
@@ -246,6 +279,38 @@ public class OrdersService {
         result.put("orderId", orderId);
         result.put("payment", payment);
         return result;
+    }
+
+    /**
+     * Stable fingerprint of "this exact basket, from this buyer, right now". Two submissions of
+     * the same order collide and are treated as one; changing anything that moves the price or
+     * the fulfilment produces a different key, so an edited order still goes through.
+     *
+     * <p>The minute bucket is what bounds it. Double clicks and network retries land inside the
+     * same minute and dedupe; a buyer who genuinely wants the same basket again a minute later
+     * is not blocked, which a purely content-derived key would have made impossible. The cost
+     * is a narrow seam: a double submit straddling a minute boundary still gets through.
+     */
+    private String idempotencyKeyFor(String buyerId, CreateOrderRequest input) {
+        StringBuilder canonical = new StringBuilder()
+                .append(buyerId).append('|')
+                .append(input.kitchenId()).append('|')
+                .append(input.menuDayId()).append('|')
+                .append(input.readySlot()).append('|')
+                .append(input.fulfillment()).append('|')
+                .append(input.courierTipCents()).append('|')
+                .append(input.deliveryAddress() == null ? "" : input.deliveryAddress().trim()).append('|')
+                .append(Instant.now().truncatedTo(ChronoUnit.MINUTES)).append('|');
+        input.items().stream()
+                .sorted(Comparator.comparing(CreateOrderRequest.Item::menuItemId))
+                .forEach(it -> canonical.append(it.menuItemId()).append('x').append(it.qty()).append(','));
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256")
+                    .digest(canonical.toString().getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(digest);
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 is required for order idempotency keys", e);
+        }
     }
 
     /** FR22 — the seller learns about a (paid) order the moment it lands. */

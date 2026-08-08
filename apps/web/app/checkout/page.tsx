@@ -76,7 +76,15 @@ export default function CheckoutPage() {
   useEffect(() => {
     setCart(getCart());
     setReady(true);
-    return subscribeCart(() => setCart(getCart()));
+    // Every other input that feeds the price - slot, fulfillment, address, tip - clears the
+    // priced summary when it changes. The quantity steppers go through setQty() instead, so
+    // they did not, and you could review a total, change the quantities, and then confirm a
+    // different one. Invalidate on any cart change rather than patching the two buttons: the
+    // cart is shared across tabs, and subscribeCart already listens for that too.
+    return subscribeCart(() => {
+      setCart(getCart());
+      setSummary(null);
+    });
   }, []);
 
   useEffect(() => {
