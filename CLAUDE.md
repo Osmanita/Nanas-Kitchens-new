@@ -303,23 +303,20 @@ Repo genelinde çok ajanlı bir hata avı yapıldı; düzeltilenler:
 
 ### ⚠️ Açık kalan hatalar — tam liste masaüstünde `yapilacaklar-nanas-kitchens.txt`
 
-Hata avı 24, denetim 12 ayrı sorun buldu; bugün 7'si düzeltildi. **Düzeltilmeyenlerin en
-önemlisi, sıradaki iş bu:**
+Hata avı 24, denetim 12 ayrı sorun buldu; 10'u düzeltildi. **Secret'larla ilgili olanların
+hepsi kapandı** (2. tur, aynı gün): delivery webhook HMAC secret'ının sabit varsayılanı da
+kaldırıldı — kimlik doğrulaması olmayan `POST /webhooks/delivery/*` üzerindeki tek koruma
+oydu; `.env.example`'daki çalışan secret değerleri boşaltıldı; ve **hem Java hem Node artık
+32 karakterden kısa/boş `ADDRESS_ENC_KEY`'i reddediyor** (ikisi de sıfırla dolduruyordu,
+yani boş değer sessizce "32 sıfır byte" anahtar demekti ve config varsayılanını kaldırmayı
+da etkisiz bırakıyordu). Geçerli anahtarlar için türetme aynen korundu, iki backend
+birbirinin şifresini çözmeye devam ediyor.
 
-- **`application.yml:84` — delivery webhook secret'ı hâlâ sabit fallback'li**
-  (`${DELIVERY_WEBHOOK_SECRET:dev-delivery-webhook-secret}`, aynı değer `.env.example:28`'de).
-  Bugün kaldırdığım iki satırın 12 satır altında, birebir aynı yapı — gözden kaçmış.
-  Bu secret, kimlik doğrulaması olmayan `POST /webhooks/delivery/*` üzerindeki **tek**
-  koruma (`DeliveryService.verifySignature`). Env değişkeni ayarlanmazsa, takip linkindeki
-  `externalId`'yi bilen biri sahte "delivered" webhook'u imzalayıp siparişi `completed`
-  yapabilir; `completed` artık `FINAL_STATUSES`'te olduğu için alıcı iptal/iade edemez.
-  Karşılaştır: Stripe'ın webhook secret'ı (satır 100) boş varsayılanla **fail-closed**
-  çalışıyor, delivery olan **fail-open**. Düzeltme bugünkünün aynısı: varsayılanı sil +
-  `IntegrationTest`'in `@DynamicPropertySource`'una test değeri ekle.
-- `packages/core/src/crypto.ts:7` — Node tarafı hâlâ `ADDRESS_ENC_KEY` yoksa **tamamen
-  sıfırlardan** oluşan bir AES anahtarına düşüyor (Java tarafı düzeltildi, bu değil).
-- `AddressCrypto.java:29` — anahtar "tanımsız" değil de **boş** ise Spring boş string
-  olarak çözüyor ve 32 sıfır byte'a padliyor, yani bugünkü fail-fast atlatılabiliyor.
+⚠️ Ama `.env`'deki `DELIVERY_WEBHOOK_SECRET` hâlâ repoda yayınlanmış olan değerin kendisi
+(27 karakter) ve `JWT_REFRESH_SECRET` sadece 13 karakter — gerçek dağıtımdan önce ikisini de
+değiştir.
+
+**Kalan açıklar:**
 - **CI `apps/api-java`'yı hiç derlemiyor/test etmiyor** (`ci.yml` sadece pnpm adımlarını
   çalıştırıyor, api-java bir pnpm workspace projesi değil) — bugünkü 5 Java düzeltmesinin
   hiçbiri CI kapsamında değil, testleri de yok.
