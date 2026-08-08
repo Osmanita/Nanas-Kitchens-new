@@ -44,6 +44,11 @@ public abstract class IntegrationTest {
         // never actually called by the order/kitchen-search flows these tests exercise.
         registry.add("spring.ai.google.genai.api-key", () -> "test-key-not-real");
         registry.add("app.menus.daily-rollover", () -> "false");
+        // app.jwt.secret and app.address-enc-key deliberately have no defaults in
+        // application.yml (a committed fallback secret is a real hole), so the test
+        // context supplies its own. JwtService requires at least 32 bytes.
+        registry.add("app.jwt.secret", () -> "integration-test-jwt-secret-32-bytes-min");
+        registry.add("app.address-enc-key", () -> "integration-test-address-enc-key-32b");
         registry.add("app.delivery.provider", () -> "mock");
         registry.add("app.payments.provider", () -> "mock");
     }

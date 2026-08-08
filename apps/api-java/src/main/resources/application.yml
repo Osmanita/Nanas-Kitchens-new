@@ -64,12 +64,18 @@ app:
   jwt:
     # Shared with the NestJS service's JWT_SECRET so access tokens are valid on both
     # backends during the migration. Must be >= 32 bytes (HS256 key requirement).
-    secret: ${JWT_SECRET:please-change-this-jwt-secret-in-prod-32b}
+    # No default on purpose: a fallback here is a signing key that ships in the repo (this one
+    # was also the value in .env.example), so an unset JWT_SECRET would silently mint tokens
+    # anyone could forge. Refuse to start instead. See scripts/dev.ps1, which exports .env.
+    secret: ${JWT_SECRET}
     # 8h covers a full dev/testing session without re-login; refresh-token-ttl-days
     # below is what actually bounds session length if this ever needs tightening.
     access-token-ttl-minutes: 480
     refresh-token-ttl-days: 30
-  address-enc-key: ${ADDRESS_ENC_KEY:32-byte-hex-key-change-me-0000000000}
+  # Same reasoning as app.jwt.secret, and the old default here was verbatim the .env.example
+  # value: without this, a deployment that forgets ADDRESS_ENC_KEY encrypts every buyer and
+  # kitchen address under a key that is public in the repo.
+  address-enc-key: ${ADDRESS_ENC_KEY}
   delivery:
     # mock | doordash | grubhub — mock ships until partner sandbox credentials exist
     # (architecture.md risk mitigation: same provider interface, pickup-only launch flag).
