@@ -30,12 +30,20 @@ class AddressCryptoTest {
     }
 
     @Test
-    void keyShorterThan32BytesIsPaddedSoItStillWorks() {
-        // Constructor pads short keys with '0' rather than rejecting them (see ADDRESS_ENC_KEY
-        // default in .env.example) — verify that path actually round-trips too.
-        AddressCrypto crypto = new AddressCrypto("short-key");
-        String encrypted = crypto.encrypt("210 W Olentangy St, Powell, OH");
-        assertThat(crypto.decrypt(encrypted)).isEqualTo("210 W Olentangy St, Powell, OH");
+    void keyShorterThan32BytesIsRejected() {
+        // Used to zero-pad short keys, which meant a blank ADDRESS_ENC_KEY silently became a
+        // key of 32 '0' bytes. Reject instead, matching JwtService.
+        assertThatThrownBy(() -> new AddressCrypto("short-key"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("at least 32");
+    }
+
+    @Test
+    void blankKeyIsRejected() {
+        // Spring resolves a set-but-empty ADDRESS_ENC_KEY to "", so removing the config
+        // default is not enough on its own.
+        assertThatThrownBy(() -> new AddressCrypto("")).isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> new AddressCrypto("   ")).isInstanceOf(IllegalStateException.class);
     }
 
     @Test
