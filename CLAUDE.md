@@ -32,6 +32,10 @@ Elle yapmak istersen adımlar şöyle:
 # (corepack Program Files'a admin izni ister — npm ile kurmak daha az sürtünmeli)
 docker compose up -d
 pnpm install
+pnpm --filter api prisma:generate         # ŞART: @prisma/client'ın postinstall'ı workspace
+                                           # kökünden çalıştığı için şemayı bulamıyor ve model
+                                           # tipsiz bir stub client üretiyor; apps/api o zaman
+                                           # derlenmiyor. migrate deploy client üretmez.
 pnpm --filter api prisma:migrate:deploy   # şema Prisma'nındır, Hibernate dokunmaz
 (cd apps/api && pnpm seed)                # günün menülerini yayınlar (aşağıya bak)
 pnpm --parallel --filter ./apps/* dev     # DİKKAT: package.json'daki 'pnpm dev' scripti tek
@@ -71,7 +75,14 @@ durdur (mvnw + fork iki java process açar).
   siparişler ödemesiz onaylanır.
 - `DELIVERY_PROVIDER=mock` — DoorDash (Story 4.2) developer hesabı gelene kadar sahte kurye.
 - `JWT_SECRET`, `ADDRESS_ENC_KEY` — 32+ byte; her iki backend (NestJS + Java) aynı değeri
-  paylaşır (token/şifreleme karşılıklı geçerli olsun diye).
+  paylaşır (token/şifreleme karşılıklı geçerli olsun diye). **2026-08-08: ikisinin de
+  varsayılanı KALDIRILDI.** Önceden `application.yml` bunlar yoksa repoda yazan sabit
+  değerlere düşüyordu (adres anahtarı birebir `.env.example`'daki değerdi), NestJS ise
+  `"dev"` kullanıyordu — yani ayarlamayı unutan bir kurulum sağlıklı görünürken herkesin
+  üretebileceği token'ları kabul ediyordu. Artık bu iki değer olmadan Java API açılmıyor
+  ("Could not resolve placeholder 'JWT_SECRET'"), NestJS auth stratejisi de hata fırlatıyor.
+  `.\dev.cmd` bunları `.env`'den export ettiği için normal akışta sorun çıkmaz; elle
+  `mvnw` çalıştırıyorsan export etmeyi unutma.
 
 ## Günlük menü — artık otomatik (ama bir tuzağı var)
 
@@ -155,11 +166,16 @@ rollover job'ın işi DEĞİL (o sadece "hiç menüsü olmayan" günleri dolduru
 
 ## Spring Security dikkat
 
-- CORS: sadece `app.cors.web-origin` (default :3000).
+- CORS: `app.cors.allowed-origin-patterns`, varsayılan `http://localhost:*`
+  (`SecurityConfig` constructor'ında okunuyor). Burada uzun süre `app.cors.web-origin`
+  yazıyordu — öyle bir property hiç olmadı, 2026-08-08'de düzeltildi.
 - `dispatcherTypeMatchers(ASYNC).permitAll()` ŞART — kaldırılırsa SSE stream sonunda
   "Access Denied" ile bağlantı kopar (Firefox: "error in input stream").
 - Public rotalar: /health, /auth/register, /auth/login, /auth/refresh, GET /kitchens/**,
-  GET /track/**. `/auth/me` KORUMALI (whitelist'te değil, kasıtlı).
+  GET /track/*, POST /webhooks/delivery/*, POST /webhooks/stripe. `/auth/me` KORUMALI
+  (whitelist'te değil, kasıtlı). ⚠️ `/track` bu dokümanda public yazmasına rağmen
+  SecurityConfig'e hiç eklenmemişti — yani paylaşılan kurye takip linkleri giriş
+  istiyordu; 2026-08-08'de eklendi. Doküman ile SecurityConfig'i birlikte güncelle.
 
 ## Veri/DB kuralları
 
@@ -255,6 +271,35 @@ Tam liste masaüstünde `yapilacaklar-nanas-kitchens.txt`. Özet:
   "bu haftanın favorisi" rozeti, puana göre sıralama, favoriler listesi, "son siparişi tekrar
   ver", satıcı panelinde puan trend grafiği, düşük puanda satıcıya otomatik uyarı, sağlık
   denetimi + müşteri puanının birleşik "güven skoru", kötüye kullanılan yorumu şikayet etme.
+
+## Hata avı ve düzeltmeler (2026-08-08)
+
+CI uzun süredir kırmızıydı; sebebi hatırlanan "multiple versions of pnpm" DEĞİLDİ (o zaten
+`d231581`'de çözülmüş). Gerçek sebep: `pnpm install` sırasında `@prisma/client`'ın postinstall'ı
+workspace kökünden çalıştığı için `apps/api/prisma/schema.prisma`'yı bulamıyor ve **model tipleri
+olmayan bir stub client** üretiyordu; `apps/api` bu yüzden 8 TS hatasıyla derlenmiyordu. Yerelde
+görünmüyordu çünkü node_modules'te eskiden üretilmiş gerçek client hatayı maskeliyor —
+**temiz bir klonda her zaman tekrar üretilir.** `ci.yml`'a ve `scripts/dev.ps1`'e
+`prisma:generate` adımı eklendi.
+
+Repo genelinde çok ajanlı bir hata avı yapıldı; düzeltilenler:
+
+- **Payout**: satıcıya kurye teslimat ücreti ($3.99) ve kurye bahşişi de ödeniyordu. Komisyon
+  zaten sadece yemek tutarından alınıyordu, yani kod kendi içinde tutarsızdı. `EarningsController`
+  içinde 3 formül de düzeltildi; `gross` artık yemek tutarı demek (satıcı ekranındaki
+  "gross − komisyon = kazanç" aritmetiği bu sayede bozulmadı, frontend'e dokunulmadı).
+  **Kod tabanındaki tek payout formülü budur** — Stripe Connect gerçek ödemelere geçince
+  parayı bu hesap taşıyacak.
+- **Reddedilmiş sipariş iptal edilebiliyordu**: `decline()` zaten porsiyonu iade edip parayı
+  geri gönderiyor, ama `declined` `FINAL_STATUSES`'te olmadığı için üstüne `cancel()`
+  çalışabiliyordu → porsiyon ikinci kez stoğa ekleniyor (olmayan stok satışa çıkıyor), zaten
+  iade edilmiş PaymentIntent'e ikinci refund gidiyordu.
+- **Teslimat adresi kaydedilmiyordu**: doğrulanıyor, geocode ediliyor, 10 mil kontrolünden
+  geçiriliyor, özete konuyor — ve INSERT'te yazılmıyordu. Şema'daki `deliveryAddressEncrypted`
+  alanı Java kaynağının hiçbir yerinde geçmiyordu. Artık AddressCrypto ile şifrelenip
+  yazılıyor. **Henüz kimse geri OKUMUYOR** — kuryeye/satıcıya göstermek ayrı bir iş.
+- `/track` public rotalara eklendi (yukarıya bak).
+- Sabit fallback secret'lar kaldırıldı (`.env` bölümüne bak).
 
 ## İsim / domain brainstorm (2026-08-07)
 
