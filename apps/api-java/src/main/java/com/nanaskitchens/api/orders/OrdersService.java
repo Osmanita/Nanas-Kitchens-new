@@ -39,7 +39,9 @@ public class OrdersService {
     private static final int DELIVERY_FEE_CENTS = 399;
     private static final double DELIVERY_RADIUS_MILES = 10;
     private static final double METERS_PER_MILE = 1609.344;
-    private static final Set<String> FINAL_STATUSES = Set.of("completed", "cancelled");
+    // "declined" belongs here: decline() already restores the portions and refunds, so letting
+    // cancel() run again on a declined order would restore the stock twice and refund twice.
+    private static final Set<String> FINAL_STATUSES = Set.of("completed", "cancelled", "declined");
 
     /** Story 4.1 seller transitions: current status -> allowed next statuses. */
     private static final Map<String, Set<String>> SELLER_TRANSITIONS = Map.of(
