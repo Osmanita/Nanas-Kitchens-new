@@ -16,9 +16,12 @@ jobs:
     env:
       DATABASE_URL: postgresql://culture:culture@localhost:5432/culture_eats
       REDIS_URL: redis://localhost:6379
-      JWT_SECRET: ci-secret
-      JWT_REFRESH_SECRET: ci-secret-2
-      ADDRESS_ENC_KEY: 32-byte-hex-key-change-me-0000000000
+      # Throwaway CI values, but they must satisfy the real rules (>= 32 chars) so a length
+      # regression fails here instead of in someone's deployment. The old ones were 9 and 11
+      # characters, and ADDRESS_ENC_KEY was the literal that used to ship in .env.example.
+      JWT_SECRET: ci-only-jwt-secret-at-least-32-characters
+      JWT_REFRESH_SECRET: ci-only-refresh-secret-at-least-32-chars
+      ADDRESS_ENC_KEY: ci-only-address-enc-key-32-chars-min
     steps:
       - uses: actions/checkout@v4
       # version comes from package.json "packageManager" — specifying it here too makes
@@ -38,3 +41,24 @@ jobs:
       - run: pnpm lint
       - run: pnpm build
       - run: pnpm test
+
+  # apps/api-java is not a pnpm workspace project, so the job above never touched it: the
+  # Spring backend - auth, payments, the payout maths, the webhook signature check - was
+  # never compiled or tested in CI at all, and a green tick said nothing about it.
+  java:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: maven
+      # mvnw is stored with LF and mode 100755, so it runs as-is on a Linux runner.
+      # *IntegrationTest is excluded on purpose: those need Testcontainers and have never
+      # been observed to run anywhere yet (see the Docker note in CLAUDE.md). Turning them
+      # on is a separate change, so that it fails on its own merits rather than taking the
+      # whole pipeline red the day compilation coverage lands.
+      - name: Compile and unit-test the Spring backend
+        working-directory: apps/api-java
+        run: ./mvnw -B test -Dtest='!*IntegrationTest'
