@@ -299,7 +299,35 @@ Repo genelinde çok ajanlı bir hata avı yapıldı; düzeltilenler:
   alanı Java kaynağının hiçbir yerinde geçmiyordu. Artık AddressCrypto ile şifrelenip
   yazılıyor. **Henüz kimse geri OKUMUYOR** — kuryeye/satıcıya göstermek ayrı bir iş.
 - `/track` public rotalara eklendi (yukarıya bak).
-- Sabit fallback secret'lar kaldırıldı (`.env` bölümüne bak).
+- `JWT_SECRET` ve `ADDRESS_ENC_KEY` için sabit fallback'ler kaldırıldı (`.env` bölümüne bak).
+
+### ⚠️ Açık kalan hatalar — tam liste masaüstünde `yapilacaklar-nanas-kitchens.txt`
+
+Hata avı 24, denetim 12 ayrı sorun buldu; bugün 7'si düzeltildi. **Düzeltilmeyenlerin en
+önemlisi, sıradaki iş bu:**
+
+- **`application.yml:84` — delivery webhook secret'ı hâlâ sabit fallback'li**
+  (`${DELIVERY_WEBHOOK_SECRET:dev-delivery-webhook-secret}`, aynı değer `.env.example:28`'de).
+  Bugün kaldırdığım iki satırın 12 satır altında, birebir aynı yapı — gözden kaçmış.
+  Bu secret, kimlik doğrulaması olmayan `POST /webhooks/delivery/*` üzerindeki **tek**
+  koruma (`DeliveryService.verifySignature`). Env değişkeni ayarlanmazsa, takip linkindeki
+  `externalId`'yi bilen biri sahte "delivered" webhook'u imzalayıp siparişi `completed`
+  yapabilir; `completed` artık `FINAL_STATUSES`'te olduğu için alıcı iptal/iade edemez.
+  Karşılaştır: Stripe'ın webhook secret'ı (satır 100) boş varsayılanla **fail-closed**
+  çalışıyor, delivery olan **fail-open**. Düzeltme bugünkünün aynısı: varsayılanı sil +
+  `IntegrationTest`'in `@DynamicPropertySource`'una test değeri ekle.
+- `packages/core/src/crypto.ts:7` — Node tarafı hâlâ `ADDRESS_ENC_KEY` yoksa **tamamen
+  sıfırlardan** oluşan bir AES anahtarına düşüyor (Java tarafı düzeltildi, bu değil).
+- `AddressCrypto.java:29` — anahtar "tanımsız" değil de **boş** ise Spring boş string
+  olarak çözüyor ve 32 sıfır byte'a padliyor, yani bugünkü fail-fast atlatılabiliyor.
+- **CI `apps/api-java`'yı hiç derlemiyor/test etmiyor** (`ci.yml` sadece pnpm adımlarını
+  çalıştırıyor, api-java bir pnpm workspace projesi değil) — bugünkü 5 Java düzeltmesinin
+  hiçbiri CI kapsamında değil, testleri de yok.
+- **`pnpm lint` hiçbir şeyi denetlemiyor**: web'de ESLint yapılandırılmamış (CI'da
+  interaktif kurulum sorusu iptal olup `|| echo lint-skip`'e düşüyor), `apps/api`'de
+  eslint kurulu bile değil. Yeşil görünüyor ama sıfır dosya lint'leniyor.
+- Teslimat adresi artık yazılıyor ama **hiçbir yerden okunmuyor** — kuryeye/satıcıya
+  göstermek ayrı bir iş.
 
 ## İsim / domain brainstorm (2026-08-07)
 
