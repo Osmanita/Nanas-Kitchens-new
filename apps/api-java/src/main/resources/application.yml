@@ -81,7 +81,11 @@ app:
     # (architecture.md risk mitigation: same provider interface, pickup-only launch flag).
     provider: ${DELIVERY_PROVIDER:mock}
     mock-fee-cents: 399
-    webhook-secret: ${DELIVERY_WEBHOOK_SECRET:dev-delivery-webhook-secret}
+    # No default, same reasoning as app.jwt.secret: this HMAC key is the ONLY authentication on
+    # POST /webhooks/delivery/* (permitAll in SecurityConfig), so a value published in the repo
+    # lets anyone who knows an externalId forge a "delivered" callback and close an order.
+    # Contrast app.payments.stripe.webhook-secret below, which fails closed on an empty value.
+    webhook-secret: ${DELIVERY_WEBHOOK_SECRET}
   menus:
     # Daily rollover (UTC midnight trap fix): republishes each kitchen's latest published
     # menu for the new UTC day with fresh portions. Idempotent; skips kitchens that already

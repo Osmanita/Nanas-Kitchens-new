@@ -49,6 +49,7 @@ public abstract class IntegrationTest {
         // context supplies its own. JwtService requires at least 32 bytes.
         registry.add("app.jwt.secret", () -> "integration-test-jwt-secret-32-bytes-min");
         registry.add("app.address-enc-key", () -> "integration-test-address-enc-key-32b");
+        registry.add("app.delivery.webhook-secret", () -> "integration-test-delivery-webhook-secret");
         registry.add("app.delivery.provider", () -> "mock");
         registry.add("app.payments.provider", () -> "mock");
     }
