@@ -108,20 +108,29 @@ Write-Ok 'pnpm and docker found'
 
 # ---------------------------------------------------------------- docker
 
+function Test-DockerUp {
+    # Do NOT redirect a native command's stderr in PowerShell (*> or 2>&1): 5.1 wraps each
+    # stderr line in a NativeCommandError ErrorRecord, which the script-wide
+    # $ErrorActionPreference = 'Stop' turns into a terminating error - firing on exactly the
+    # "docker is down" path this check exists to handle. Let cmd.exe swallow the output so
+    # only the exit code ever reaches PowerShell.
+    cmd /c "docker info >nul 2>&1"
+    return $LASTEXITCODE -eq 0
+}
+
 Write-Step 'Starting Docker (PostGIS + Redis)'
-docker info *> $null
-if ($LASTEXITCODE -ne 0) {
+if (-not (Test-DockerUp)) {
     Write-Warn 'Docker daemon not responding - launching Docker Desktop...'
     $dockerDesktop = 'C:\Program Files\Docker\Docker\Docker Desktop.exe'
     if (Test-Path $dockerDesktop) { Start-Process $dockerDesktop }
     $waited = 0
+    $dockerReady = $false
     while ($waited -lt 120) {
         Start-Sleep -Seconds 5
         $waited += 5
-        docker info *> $null
-        if ($LASTEXITCODE -eq 0) { break }
+        if (Test-DockerUp) { $dockerReady = $true; break }
     }
-    if ($LASTEXITCODE -ne 0) { throw 'Docker did not become ready within 120s.' }
+    if (-not $dockerReady) { throw 'Docker did not become ready within 120s.' }
     Write-Ok "Docker ready after ${waited}s"
 }
 
@@ -134,7 +143,9 @@ try {
     Write-Step 'Waiting for Postgres'
     $ready = $false
     for ($i = 0; $i -lt 30; $i++) {
-        docker compose exec -T db pg_isready -U culture *> $null
+        # Same NativeCommandError trap as Test-DockerUp: pg_isready writes to stderr while
+        # the database is still starting, which is the normal case on this very line.
+        cmd /c "docker compose exec -T db pg_isready -U culture >nul 2>&1"
         if ($LASTEXITCODE -eq 0) { $ready = $true; break }
         Start-Sleep -Seconds 2
     }
@@ -156,6 +167,13 @@ try {
     }
 
     if (-not $SkipMigrate) {
+        # @prisma/client's postinstall cannot find the schema from the workspace root, so a
+        # fresh clone gets a stub client with no model types and apps/api will not typecheck.
+        # 'migrate deploy' does not generate one either. Same step CI needs (see ci.yml).
+        Write-Step 'Generating Prisma client'
+        pnpm --filter api prisma:generate
+        if ($LASTEXITCODE -ne 0) { throw 'prisma generate failed.' }
+
         Write-Step 'Applying Prisma migrations'
         pnpm --filter api prisma:migrate:deploy
         if ($LASTEXITCODE -ne 0) { throw 'prisma migrate deploy failed.' }
