@@ -316,15 +316,49 @@ birbirinin şifresini çözmeye devam ediyor.
 (27 karakter) ve `JWT_REFRESH_SECRET` sadece 13 karakter — gerçek dağıtımdan önce ikisini de
 değiştir.
 
-**Kalan açıklar:**
-- **CI `apps/api-java`'yı hiç derlemiyor/test etmiyor** (`ci.yml` sadece pnpm adımlarını
-  çalıştırıyor, api-java bir pnpm workspace projesi değil) — bugünkü 5 Java düzeltmesinin
-  hiçbiri CI kapsamında değil, testleri de yok.
-- **`pnpm lint` hiçbir şeyi denetlemiyor**: web'de ESLint yapılandırılmamış (CI'da
-  interaktif kurulum sorusu iptal olup `|| echo lint-skip`'e düşüyor), `apps/api`'de
-  eslint kurulu bile değil. Yeşil görünüyor ama sıfır dosya lint'leniyor.
+### 3. tur — CI/lint gerçek oldu, çift gönderim kapandı (2026-08-08/09)
+
+- **CI artık Java'yı derliyor ve test ediyor.** `ci.yml`'da ayrı bir `java` job'ı var
+  (temurin 21 + maven cache). `*IntegrationTest` bilerek dışarıda — Testcontainers'a bağlı
+  ve hiçbir yerde çalıştığı görülmedi; açmak ayrı bir iş. `mvnw` git'te LF + `100755`
+  saklandığı için Linux runner'da `chmod`/`sed` gerekmiyor.
+- **Lint gerçekten denetliyor.** Dört paketin dördü de tiyatroydu (web'de yapılandırılmamış
+  `next lint` CI'da interaktif soruya takılıp `|| echo lint-skip`'e düşüyordu, `apps/api`'de
+  eslint kurulu bile değildi). Artık tek bir flat config (`eslint.config.mjs`) ve kaçış
+  kapısı yok. **Açar açmaz buldu:** `packages/core/src/` içinde git'e commit'lenmiş derlenmiş
+  çıktı varmış ve `src/crypto.js` hâlâ kaldırılan sıfır-anahtar açığını taşıyormuş — silindi.
+- **Çift gönderim kapandı.** Idempotency anahtarı artık istek içeriğinden + bir dakikalık
+  kovadan türetiliyor (eskiden her denemede yeni UUID'ydi → iki sipariş, iki çekim, iki kez
+  stok düşümü). Chat onay butonunda in-flight koruması var; checkout'ta herhangi bir sepet
+  değişimi fiyat özetini geçersiz kılıyor.
+  ⚠️ Bu bölümde iki kez kendi hatamı yakaladım, ikisini de **çalışan API'ye istek atarak**:
+  (1) idempotency kontrolünü stok düşümünün altına koymuşum, ikinci istek stoğu düşürüp erken
+  dönüyor ve `@Transactional` bunu commit ediyordu — porsiyon sızıyordu; (2) dedup, `pending`
+  dışındaki her durumu "onaylandı" sayıyordu, iptal edilmiş sipariş dahil — iptal sonrası aynı
+  sepeti tekrar sipariş etmek ölü siparişi geri veriyor ve hiç yeni kayıt oluşturmuyordu.
+  **Bu tür değişiklikleri incelemeyle değil, gerçekten istek atarak doğrula.**
+
+**Kalan açıklar (öncelikli):**
+- **`OrdersService.cancel()` hâlâ fazla geniş.** Sadece `FINAL_STATUSES`'i reddediyor, yani
+  `accepted`/`preparing`/`ready` iptal edilebiliyor (buton da `orders/[id]/page.tsx:191`'de
+  duruyor). `ready` bir teslimat siparişinde: pişmiş yemeğin porsiyonları stoğa geri ekleniyor
+  (hayali stok), yemek+ücret+bahşiş tamamen iade ediliyor, ve **kurye iptal edilmiyor** —
+  `DeliveryProvider` arayüzünde iptal metodu bile yok, yemek yine teslim ediliyor. Sonrasında
+  `delivered` webhook'u boşa düşüyor ve `DeliveryJob='delivered'` / `Order='cancelled'` kalıyor.
+  Doğru yön: tersini almak yerine bir `CANCELLABLE` kümesi (gerçekçi olan `pending` + `confirmed`).
+- **MCP OAuth** (`apps/mcp-server/src/oauth.ts:246`) kendi kendine kayıt olan herhangi bir
+  istemciye **ham platform refresh token'ını** veriyor: MCP'ye kısıtlı değil, 30 günlük, tam
+  yetkili, istemci bazında iptal edilemiyor. `/register` kimlik doğrulamasız.
+- **Chat ödenmemiş siparişe "Order confirmed" diyor** (`chat/page.tsx:437`) ve
+  `/orders/undefined` linki üretiyor — sunucu `{confirmed:false, requiresPayment:true, orderId}`
+  dönerken kod `body.order ?? body` yapıyor. Mock sağlayıcı anında onayladığı için şimdilik
+  görünmüyor; Stripe açılınca çıkar.
+- `apps/web/lib/api.ts:65` — eşzamanlı 401'ler tek kullanımlık refresh token için yarışıyor;
+  kaybeden istek yeni token'ları silip kullanıcıyı çıkış yaptırıyor.
 - Teslimat adresi artık yazılıyor ama **hiçbir yerden okunmuyor** — kuryeye/satıcıya
   göstermek ayrı bir iş.
+- Üç davranış düzeltmesinin (payout, declined, adres) **testi yok**. CI artık Java'yı
+  çalıştırdığına göre yazmanın karşılığı var.
 
 ## İsim / domain brainstorm (2026-08-07)
 
