@@ -146,9 +146,17 @@ rollover job'ın işi DEĞİL (o sadece "hiç menüsü olmayan" günleri dolduru
   etmeyip ham bir Jackson hatası fırlatıyordu. Record'un compact constructor'ı null'ları
   güvenli varsayılana çeviriyor (0 / false / qty:1) — yeni bir alan eklerken aynı deseni
   kullan, primitif ekleme.
-- Sipariş onayı transaction içinde: Stripe PaymentIntent (test modu, server-confirm,
-  `pm_card_visa`) + mock DeliveryJob (`/track/{externalId}` linki) + stok düşümü;
-  ödeme patlarsa hepsi geri alınır.
+- Sipariş onayı transaction içinde: PaymentIntent + stok düşümü; ödeme patlarsa hepsi geri
+  alınır. **DeliveryJob burada oluşmuyor** — kurye ancak satıcı siparişi `ready` yaptığında
+  çağrılıyor (`OrdersService.transition`, `deliveryService.createForOrder`). Bu doküman uzun
+  süre "onayda oluşuyor" diyordu; 2026-08-09'da düzeltildi.
+- **Mock sağlayıcı anında `succeeded` döner, Stripe DÖNMEZ**: `StripePaymentProvider`
+  `requires_payment_method` durumunda bir intent yaratır, yani `place()`
+  `{confirmed:false, requiresPayment:true, orderId, payment:{clientSecret...}}` döner ve
+  istemci ödemeyi Stripe Elements ile tamamlar; siparişi `confirmed`'a çeviren şey
+  `payment_intent.succeeded` webhook'u. (Doküman eskiden "server-confirm `pm_card_visa`"
+  diyordu — öyle bir kod yok.) Bu yüzden `AI_PROVIDER`/`app.payments.provider=stripe`'a
+  geçen her istemci akışının `requiresPayment` dalını ele alması ŞART.
 - Free tier RPM düşük, agent turu başına birkaç model çağrısı yapar; 429/503 retry
   application.yml'de. Yine de arada "try again" gerekebilir.
 
@@ -225,13 +233,36 @@ rollover job'ın işi DEĞİL (o sadece "hiç menüsü olmayan" günleri dolduru
 
 - **`apps/web`**: Vitest (`pnpm test`). `vitest.config.ts` + jsdom + Testing Library.
   `lib/cart.test.ts`, `lib/location.test.ts` — DB/network gerektirmez, saniyeler sürer.
-- **`apps/api-java`**: JUnit 5 + AssertJ (`.\mvnw.cmd test`, pom.xml'de zaten vardı, hiç
-  kullanılmamıştı). `JwtServiceTest`, `AddressCryptoTest` — Spring context/DB gerektirmez.
-  Ayrıca `src/test/java/.../support` altında Testcontainers tabanlı entegrasyon test
-  altyapısı var (`IntegrationTest`, `MigrationRunner` — apps/api/prisma/migrations'ı gerçek
-  bir Postgres+PostGIS container'ına replay eder) + `KitchensServiceSearchIntegrationTest`,
-  `OrdersServiceIntegrationTest`; bu makinede Docker Desktop uyumsuzluğu yüzünden
-  ÇALIŞTIRILAMADI (yukarıki Windows tuzakları'na bak) — kod hazır, doğrulanmamış.
+- **`apps/api-java`**: JUnit 5 + AssertJ. `JwtServiceTest`, `AddressCryptoTest` — Spring
+  context/DB gerektirmez. **Entegrasyon testleri 2026-08-09'da İLK KEZ gerçekten çalıştı**
+  (29/29 yeşil); öncesinde "kod hazır, doğrulanmamış" durumundaydı ve aslında hiç
+  çalışamazdı (aşağıya bak).
+- **Nasıl çalıştırılır (bu makinede):** `IntegrationTest` artık iki yoldan veritabanı bulur:
+  `TEST_DATABASE_URL` doluysa hazır bir Postgres+PostGIS, boşsa Testcontainers. Testcontainers
+  bu makinede HÂLÂ çalışmıyor (docker-java Docker Desktop'ın pipe'larını göremiyor), o yüzden:
+  ```powershell
+  docker compose up -d
+  # bir kereye mahsus: docker compose exec -T db psql -U culture -d postgres -c "CREATE DATABASE nanas_test"
+  $env:TEST_DATABASE_URL = "jdbc:postgresql://localhost:5432/nanas_test"
+  .\apps\api-java\mvnw.cmd -f apps\api-java\pom.xml test
+  ```
+  Harness her JVM'de `schema public`'i DROP edip migration'ları yeniden oynatır; bu yüzden adı
+  `_test` ile bitmeyen bir veritabanını kasıtlı olarak reddeder (dev DB'yi silmemek için).
+- **Neden hiç çalışamamıştı:** `MigrationRunner` SQL'i `split(";")` ile bölüyordu ve migration
+  dosyalarının **yorum satırlarındaki** noktalı virgülleri de bölüyordu (`0003_reviews`,
+  `0005_dish_requests`, `0009_refunds`, `0010_notification_preferences` — dördü de bozuluyordu).
+  Artık gerçek bir tarayıcı var: `--` ve `/* */` yorumları, `'...'`/`"..."` kaçışları ve
+  `$$`/`$tag$` gövdeleri içindeki `;` terminatör sayılmıyor.
+- `@SpringBootTest` **MOCK** olmalı (NONE DEĞİL): `SecurityConfig` `HttpSecurity` alan bir bean
+  tanımlıyor, onu sağlayan `@EnableWebSecurity` ise `@ConditionalOnWebApplication(SERVLET)`
+  altında geliyor — NONE ile context hiç ayağa kalkmıyor.
+- `TestData.insertKitchen` artık `addressEncrypted`'a **gerçek şifreli metin** yazıyor. Önceden
+  `'encrypted-address'` literal'i vardı; `detail()` onaylanmış bir pickup siparişinde adresi
+  çözmeye çalıştığı için `ADDRESS_DECRYPT_FAILED` ile patlıyordu.
+- Kapsam: `OrdersServiceIntegrationTest`, `KitchensServiceSearchIntegrationTest`,
+  `OrdersServiceCancelIntegrationTest`, `EarningsPayoutIntegrationTest`,
+  `OrdersServiceDeliveryAddressIntegrationTest`. Son üçü mutasyon testinden geçirildi (hata
+  kasten geri konup kırmızı oldukları görüldü) — yani gerçekten davranışı tutuyorlar.
 
 ## Bilinen eksikler / sıradaki adaylar
 
@@ -339,26 +370,32 @@ değiştir.
   **Bu tür değişiklikleri incelemeyle değil, gerçekten istek atarak doğrula.**
 
 **Kalan açıklar (öncelikli):**
-- **`OrdersService.cancel()` hâlâ fazla geniş.** Sadece `FINAL_STATUSES`'i reddediyor, yani
-  `accepted`/`preparing`/`ready` iptal edilebiliyor (buton da `orders/[id]/page.tsx:191`'de
-  duruyor). `ready` bir teslimat siparişinde: pişmiş yemeğin porsiyonları stoğa geri ekleniyor
-  (hayali stok), yemek+ücret+bahşiş tamamen iade ediliyor, ve **kurye iptal edilmiyor** —
-  `DeliveryProvider` arayüzünde iptal metodu bile yok, yemek yine teslim ediliyor. Sonrasında
-  `delivered` webhook'u boşa düşüyor ve `DeliveryJob='delivered'` / `Order='cancelled'` kalıyor.
-  Doğru yön: tersini almak yerine bir `CANCELLABLE` kümesi (gerçekçi olan `pending` + `confirmed`).
 - **MCP OAuth** (`apps/mcp-server/src/oauth.ts:246`) kendi kendine kayıt olan herhangi bir
   istemciye **ham platform refresh token'ını** veriyor: MCP'ye kısıtlı değil, 30 günlük, tam
-  yetkili, istemci bazında iptal edilemiyor. `/register` kimlik doğrulamasız.
-- **Chat ödenmemiş siparişe "Order confirmed" diyor** (`chat/page.tsx:437`) ve
-  `/orders/undefined` linki üretiyor — sunucu `{confirmed:false, requiresPayment:true, orderId}`
-  dönerken kod `body.order ?? body` yapıyor. Mock sağlayıcı anında onayladığı için şimdilik
-  görünmüyor; Stripe açılınca çıkar.
+  yetkili, istemci bazında iptal edilemiyor. `/register` kimlik doğrulamasız. **Sıradaki iş
+  bu** — ECS deployment'ından önce kapanmalı.
 - `apps/web/lib/api.ts:65` — eşzamanlı 401'ler tek kullanımlık refresh token için yarışıyor;
   kaybeden istek yeni token'ları silip kullanıcıyı çıkış yaptırıyor.
 - Teslimat adresi artık yazılıyor ama **hiçbir yerden okunmuyor** — kuryeye/satıcıya
   göstermek ayrı bir iş.
-- Üç davranış düzeltmesinin (payout, declined, adres) **testi yok**. CI artık Java'yı
-  çalıştırdığına göre yazmanın karşılığı var.
+
+### 4. tür — iptal penceresi, chat ödemesi, testlerin gerçekten çalışması (2026-08-09)
+
+- **`OrdersService.cancel()` daraltıldı.** `FINAL_STATUSES`'i reddetmek yerine artık
+  `CANCELLABLE = {pending, confirmed}` gerekiyor. Önceden `accepted`/`preparing`/`ready` iptal
+  edilebiliyordu: pişmiş yemeğin porsiyonları stoğa geri ekleniyor (hayali stok) ve
+  yemek+ücret+bahşiş tamamen iade ediliyordu. `orders/[id]/page.tsx` butonu da aynı kümeye
+  bağlandı — iki taraf birlikte güncellenmeli. Askıda kurye korkusu çıkmadı: `DeliveryJob`
+  zaten `ready`'de oluşuyor, yani iptal edilebilir durumlarda hiç kurye yok.
+- **Chat artık ödenmemiş siparişi "onaylandı" saymıyor.** `body.order ?? body` kalkti; ödeme
+  adımı `app/components/PaymentStep.tsx`'e çıkarıldı ve hem checkout hem chat aynı bileşeni
+  kullanıyor. Yeni bir sipariş verme akışı yazarken `requiresPayment` dalını ele almadan
+  "confirmed" gösterme.
+- **Entegrasyon testleri ilk kez çalıştı** ve CI'da da çalışıyor (`ci.yml`'daki `java` job'ına
+  postgis service container'ı eklendi, `-Dtest='!*IntegrationTest'` hariç tutması kaldırıldı).
+  Ayrıntı için "Test suite" bölümüne bak.
+- ⚠️ **Windows tuzağı, tekrar:** `Set-Content -Encoding utf8` bir `.java` dosyasına da BOM
+  ekliyor ve derlemeyi bozuyor. Kaynak dosyaları PowerShell'le yazma — Edit/Write kullan.
 
 ## İsim / domain brainstorm (2026-08-07)
 
