@@ -1,9 +1,17 @@
 # CLAUDE.md
 
 Nanas' Kitchens: 10 mil yarıçapında ev mutfakları için kültür temalı yemek pazarı.
-BMAD dokümanları `docs/` altında; kod oradaki hikayeleri uygular. Repo:
-https://github.com/Osmanita/Nanas-Kitchens-new (origin; eski `ctuka` remote'u referans).
+BMAD dokümanları `docs/` altında; kod oradaki hikayeleri uygular.
 Demo pazaryeri artık **Powell, Ohio (43065)** merkezli (bkz. Seed verisi).
+
+**Git remote'ları — 2026-08-09'da düzeltildi, doküman bunu ters yazıyordu:**
+- `origin` = https://github.com/ctuka/NanasKitchens.git. Çalışılan dal **`osman`**;
+  `main` lokalde `origin/main`'i takip ediyor ama ondan çok ileride, o yüzden push
+  hedefi açıkça verilmeli: `git push origin main:osman`. Düz `git push` yanlış yere gider.
+- https://github.com/Osmanita/Nanas-Kitchens-new.git ikinci bir kopya; remote olarak
+  tanımlı DEĞİL, oraya push elle yapılıyor (`git push <url> main:main`) ve geride kalıyor.
+- Yani "origin Osmanita'dır" cümlesi yanlıştı; nereye push edeceğini varsayma, `git remote -v`
+  ve `git ls-remote --heads origin` ile teyit et.
 
 ## Mimari (strangler migration)
 
