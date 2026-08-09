@@ -54,7 +54,9 @@ const STATUS_LABEL: Record<string, string> = {
   cancelled: "Cancelled",
 };
 
-const FINAL = new Set(["completed", "cancelled", "declined"]);
+// Mirrors OrdersService.CANCELLABLE — once the kitchen has accepted, the food is being
+// cooked and the server rejects the cancel (NOT_CANCELLABLE). Keep the two in step.
+const CANCELLABLE = new Set(["pending", "confirmed"]);
 
 export default function OrderPage() {
   const { id } = useParams<{ id: string }>();
@@ -188,7 +190,7 @@ export default function OrderPage() {
 
       {order.status === "completed" && <ReviewCard order={order} />}
 
-      {!FINAL.has(order.status) && (
+      {CANCELLABLE.has(order.status) && (
         <button
           onClick={cancel}
           disabled={cancelling}

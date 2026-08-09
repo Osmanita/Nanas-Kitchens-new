@@ -46,9 +46,13 @@ public class OrdersService {
     private static final int DELIVERY_FEE_CENTS = 399;
     private static final double DELIVERY_RADIUS_MILES = 10;
     private static final double METERS_PER_MILE = 1609.344;
-    // "declined" belongs here: decline() already restores the portions and refunds, so letting
-    // cancel() run again on a declined order would restore the stock twice and refund twice.
-    private static final Set<String> FINAL_STATUSES = Set.of("completed", "cancelled", "declined");
+    // Cancelling releases the portions and refunds in full, so it may only run while nothing
+    // has been spent on the order yet: 'pending' (the buyer's payment sheet is still open) and
+    // 'confirmed' (the seller hasn't accepted). From 'accepted' on the kitchen is cooking —
+    // restoring the portions would put food that no longer exists back on sale, and the buyer
+    // would be refunded for it. 'declined' is excluded for the opposite reason: decline()
+    // already restores and refunds, so a second pass would do both twice.
+    private static final Set<String> CANCELLABLE = Set.of("pending", "confirmed");
     // Orders that ended without the buyer getting food. An idempotency replay must not hand
     // one of these back as a confirmed order (see place()).
     private static final Set<String> DEAD_STATUSES = Set.of("cancelled", "declined");
@@ -684,7 +688,7 @@ public class OrdersService {
         if (!buyerId.equals(order.get("buyerId"))) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN);
         }
-        if (FINAL_STATUSES.contains((String) order.get("status"))) {
+        if (!CANCELLABLE.contains((String) order.get("status"))) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "NOT_CANCELLABLE");
         }
         String previousStatus = (String) order.get("status");
