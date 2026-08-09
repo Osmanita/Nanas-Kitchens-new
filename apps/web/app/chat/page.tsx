@@ -5,6 +5,7 @@ import Link from "next/link";
 import { apiFetch } from "../../lib/api";
 import { getLocation, saveLocation, type PickedLocation } from "../../lib/location";
 import LocationPickerModal from "../components/LocationPickerModal";
+import PaymentStep, { type PendingPayment } from "../components/PaymentStep";
 
 interface Message {
   role: "user" | "assistant";
@@ -224,6 +225,11 @@ export default function ChatPage() {
   const [pendingMenu, setPendingMenu] = useState<MenuCard | null>(null);
   const [pendingKitchens, setPendingKitchens] = useState<KitchenListCard | null>(null);
   const [confirmedOrder, setConfirmedOrder] = useState<ConfirmedOrder | null>(null);
+  // Set when POST /orders answers requiresPayment (the real Stripe provider): the order is
+  // placed but pending, so the card below has to settle it before anything is "confirmed".
+  const [pendingPayment, setPendingPayment] = useState<
+    (PendingPayment & { totalCents: number }) | null
+  >(null);
   const [picked, setPicked] = useState<Record<string, number>>({});
   const [queued, setQueued] = useState<string | null>(null);
   const [recording, setRecording] = useState(false);
@@ -432,9 +438,31 @@ export default function ChatPage() {
       setMessages((prev) => [...prev, { role: "assistant", content: `Error: ${body.message}` }]);
       return;
     }
+    if (body.requiresPayment) {
+      // Story 3.4: the order exists but is still 'pending' — it holds the portions and nothing
+      // has been charged. There is no `order` object in this reply, so announcing "confirmed"
+      // here also produced a /orders/undefined link. Hand the buyer the PaymentElement instead;
+      // the payment_intent.succeeded webhook is what flips the order to confirmed.
+      setPendingPayment({
+        orderId: body.orderId,
+        clientSecret: body.payment.clientSecret,
+        publishableKey: body.payment.publishableKey,
+        totalCents: pendingSummary.summary.totalCents,
+      });
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          content:
+            "Your portions are reserved. Enter your card below to complete the order — " +
+            "nothing is charged until you pay.",
+        },
+      ]);
+      return;
+    }
     // POST /orders answers {confirmed: true, order: {...}} on success; the order card (below)
     // renders the id as a link and, once the kitchen marks it ready, the tracking link too.
-    const order = body.order ?? body;
+    const order = body.order;
     setConfirmedOrder({
       id: order.id,
       readySlot: order.readySlot,
@@ -782,6 +810,14 @@ export default function ChatPage() {
                 </button>
               </div>
             </div>
+          </div>
+        )}
+
+        {/* Card payment for a placed-but-unpaid order (real Stripe provider only). Paying
+            redirects to /orders/{id}; the order stays pending until the webhook lands. */}
+        {pendingPayment && (
+          <div className="fade-up" style={{ margin: "14px 0" }}>
+            <PaymentStep payment={pendingPayment} totalCents={pendingPayment.totalCents} />
           </div>
         )}
 
