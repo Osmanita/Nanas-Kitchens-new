@@ -47,6 +47,21 @@ jobs:
   # never compiled or tested in CI at all, and a green tick said nothing about it.
   java:
     runs-on: ubuntu-latest
+    services:
+      # PostGIS, not plain postgres: the raw-SQL search path calls ST_DWithin/ST_MakePoint,
+      # and the integration tests replay the Prisma migrations, which enable the extension.
+      # Its own database, separate from the `test` job's: IntegrationTest drops and recreates
+      # `schema public` on every run and refuses any database not named *_test.
+      postgres:
+        image: postgis/postgis:16-3.4
+        env: { POSTGRES_USER: culture, POSTGRES_PASSWORD: culture, POSTGRES_DB: nanas_test }
+        ports: ["5432:5432"]
+        # -h localhost on purpose: during initdb the image runs a temporary server bound to the
+        # Unix socket only, and a bare `pg_isready` reports healthy against THAT — releasing the
+        # job before the TCP listener on 5432 exists.
+        options: >-
+          --health-cmd "pg_isready -h localhost -U culture -d nanas_test"
+          --health-interval 5s --health-timeout 5s --health-retries 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -55,10 +70,14 @@ jobs:
           java-version: 21
           cache: maven
       # mvnw is stored with LF and mode 100755, so it runs as-is on a Linux runner.
-      # *IntegrationTest is excluded on purpose: those need Testcontainers and have never
-      # been observed to run anywhere yet (see the Docker note in CLAUDE.md). Turning them
-      # on is a separate change, so that it fails on its own merits rather than taking the
-      # whole pipeline red the day compilation coverage lands.
-      - name: Compile and unit-test the Spring backend
+      # The whole suite runs now, *IntegrationTest included: IntegrationTest prefers
+      # TEST_DATABASE_URL over Testcontainers, so it uses the service container above and
+      # never needs a Docker socket of its own. MigrationRunner resolves the Prisma
+      # migrations relative to this working directory (../api/prisma/migrations).
+      - name: Compile and test the Spring backend
         working-directory: apps/api-java
-        run: ./mvnw -B test -Dtest='!*IntegrationTest'
+        env:
+          TEST_DATABASE_URL: jdbc:postgresql://localhost:5432/nanas_test
+          TEST_DATABASE_USER: culture
+          TEST_DATABASE_PASSWORD: culture
+        run: ./mvnw -B test

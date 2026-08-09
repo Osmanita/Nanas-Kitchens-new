@@ -1,5 +1,6 @@
 package com.nanaskitchens.api.support;
 
+import com.nanaskitchens.api.kitchens.AddressCrypto;
 import java.util.UUID;
 import org.springframework.jdbc.core.simple.JdbcClient;
 
@@ -7,6 +8,13 @@ import org.springframework.jdbc.core.simple.JdbcClient;
  * own seed script (apps/api/prisma/seed.ts) writes, kept intentionally small (just what
  * OrdersService/KitchensService actually read). */
 public final class TestData {
+
+    // Kitchen.addressEncrypted has to hold real ciphertext, not a placeholder: OrdersService
+    // .detail() discloses the pickup address on any confirmed pickup order, and decrypting a
+    // literal blows up with ADDRESS_DECRYPT_FAILED before a single assertion runs.
+    private static final AddressCrypto CRYPTO = new AddressCrypto(IntegrationTest.ADDRESS_ENC_KEY);
+
+    public static final String KITCHEN_ADDRESS = "1 Kitchen Way, Powell, OH 43065";
 
     private TestData() {
     }
@@ -31,10 +39,11 @@ public final class TestData {
                 INSERT INTO "Kitchen"
                   (id, "sellerId", name, "cuisineTag", description, photos, "addressEncrypted",
                    "complianceAttestedAt")
-                VALUES (:id, :sellerId, 'Test Kitchen', 'turkish', 'desc', '{}', 'encrypted-address', now())
+                VALUES (:id, :sellerId, 'Test Kitchen', 'turkish', 'desc', '{}', :addressEncrypted, now())
                 """)
                 .param("id", id)
                 .param("sellerId", sellerId)
+                .param("addressEncrypted", CRYPTO.encrypt(KITCHEN_ADDRESS))
                 .update();
         db.sql("""
                 UPDATE "Kitchen" SET geo = ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geography
