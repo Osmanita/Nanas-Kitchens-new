@@ -233,8 +233,11 @@ export default function SellerMenuPage() {
   return (
     <main style={{ maxWidth: 860, margin: "0 auto", padding: "32px 24px" }}>
       <h1 style={{ margin: "0 0 4px", fontSize: 26, color: "var(--brand-green)" }}>Menus &amp; Portions</h1>
-      <p style={{ margin: "0 0 20px", color: "var(--brand-muted)" }}>
+      <p style={{ margin: "0 0 12px", color: "var(--brand-muted)" }}>
         {kitchen!.name} — build your daily menu, set portions and ready windows, then publish.
+      </p>
+      <p style={{ margin: "0 0 20px" }}>
+        <Link href="/seller/menu-chat">Build it by chatting instead →</Link>
       </p>
 
       {!attested && <AttestationCard kitchenId={kitchen!.id} onAttested={loadKitchen} />}

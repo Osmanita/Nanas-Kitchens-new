@@ -69,6 +69,21 @@ menülerini idempotent şekilde yayınlar. Otomatikleştirilmedi (aday iş).
 - Free tier RPM düşük, agent turu başına birkaç model çağrısı yapar; 429/503 retry
   application.yml'de. Yine de arada "try again" gerekebilir.
 
+## Satıcı menü asistanı (chat ile menü oluşturma)
+
+- `/seller/menu-chat` (web) → `POST /chat/seller/stream` (`@PreAuthorize("hasRole('SELLER')")`).
+  Satıcı "yarın 8 porsiyon imambayıldı 11 dolardan" der; ajan dish + menuDay + publish yapar.
+- `SellerMenuTools` — getMyKitchen / listDishes / createDish / listMenuDays / createMenuDay /
+  updateMenuDay / publishMenuDay. Mutfak her çağrıda JWT'den çözülür, satıcı sadece kendi
+  mutfağına dokunabilir. `SellerSystemPrompt` protokolleri tanımlar.
+- Kart protokolleri: ```json {"type":"menuDraft", items:[...]}``` → onay kartı (Save menu /
+  Save & publish); ```json {"type":"menuPublished", ...}``` → yayın onayı. Onay ALINMADAN
+  hiçbir şey yazılmaz.
+- Bugünün tarihi modele UTC context mesajı olarak enjekte edilir (MenuDay tarihi UTC günü).
+- `AgentService` iki ChatClient tutar; `ChatClient.Builder` prototype olduğu ve default
+  request'i ürettiği client'larla PAYLAŞTIĞI için her sistem promptu KENDİ builder'ını
+  almalı (`ObjectProvider.getObject()`) — tek builder'ı iki kez kullanmak promptları karıştırır.
+
 ## Spring Security dikkat
 
 - CORS: sadece `app.cors.web-origin` (default :3000).
@@ -78,6 +93,12 @@ menülerini idempotent şekilde yayınlar. Otomatikleştirilmedi (aday iş).
 
 ## Veri/DB kuralları
 
+- **Bu makinede yerel (Homebrew) Postgres, docker'daki `db` konteynerini gölgeliyor.**
+  Native PG `127.0.0.1:5432`'yi tutuyor, docker ise `*:5432`'yi; `localhost` her zaman
+  native'e gider. Gerçek veri (mutfaklar, siparişler) NATIVE PG'de — docker'daki DB boş.
+  Ayırt etme yolu sürüm: native 18.4, konteyner imajı PG 16.4. Java API log'unda
+  "Database version: 18.4" görüyorsan doğru yerdesin. Docker'dan sadece **Redis** kullanılıyor.
+  Native PG'yi durdurursan uygulama sessizce BOŞ konteyner DB'sine düşer.
 - Şema ve migration'lar Prisma'nın (apps/api/prisma). Java'da `ddl-auto: none`,
   her identifier quoted camelCase. Yeni kolon = elle migration dosyası +
   `prisma migrate deploy` (migrate dev interaktif olduğundan çalışmaz).
