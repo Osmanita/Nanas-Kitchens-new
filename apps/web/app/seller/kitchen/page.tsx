@@ -9,6 +9,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiFetch, getSession, Session } from "../../../lib/api";
 import { CUISINES } from "../../../lib/cuisines";
+import AddressAutocomplete, { AddressPick } from "../../components/AddressAutocomplete";
 
 interface Kitchen {
   id: string;
@@ -30,23 +31,6 @@ interface HealthReport {
 
 const MAX_PHOTOS = 10;
 
-/** Demo-safe USPS-style normalization. A real USPS API provider can replace this once its
- * credentials are configured; the seller must always approve the suggested address. */
-function uspsStyleSuggestion(raw: string): string | null {
-  let value = raw.trim().replace(/\s+/g, " ");
-  if (!value) return null;
-  value = value
-    .replace(/\baz[ae]lea\b/gi, "Azalea")
-    .replace(/\bdrive\b\.?/gi, "Dr")
-    .replace(/\bstreet\b\.?/gi, "St")
-    .replace(/\broad\b\.?/gi, "Rd")
-    .replace(/\bavenue\b\.?/gi, "Ave")
-    .replace(/\bpowell\s*,?\s*oh(?:io)?\b/i, "Powell, OH 43065");
-  // Add separators when a seller enters the common street/city/state free-text pattern.
-  value = value.replace(/^(\d+\s+[^,]+?)\s+(Powell, OH 43065)$/i, "$1, $2");
-  return value.localeCompare(raw.trim(), undefined, { sensitivity: "accent" }) === 0 ? null : value;
-}
-
 export default function SellerKitchenPage() {
   const router = useRouter();
   const [session, setSession] = useState<Session | null | undefined>(undefined);
@@ -60,7 +44,8 @@ export default function SellerKitchenPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [addressSuggestion, setAddressSuggestion] = useState<string | null>(null);
+  /** Set once the seller picks a real place; carries the coordinates so the API never geocodes. */
+  const [picked, setPicked] = useState<AddressPick | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -94,7 +79,11 @@ export default function SellerKitchenPage() {
       };
       if (form.address.trim()) {
         payload.address = form.address.trim();
-        if (needManualGeo && lat && lng) {
+        if (picked && picked.label === form.address.trim()) {
+          // Picked from the suggestion list — send its coordinates so the server skips geocoding.
+          payload.lat = picked.lat;
+          payload.lng = picked.lon;
+        } else if (needManualGeo && lat && lng) {
           payload.lat = Number(lat);
           payload.lng = Number(lng);
         }
@@ -106,9 +95,10 @@ export default function SellerKitchenPage() {
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         if (body.message === "GEOCODING_FAILED") {
-          // Story 1.3 AC4 — surface the manual lat/lng fallback.
+          // Story 1.3 AC4 — last-resort manual entry, now only reachable for a typed
+          // address that was never confirmed against the suggestion list.
           setNeedManualGeo(true);
-          setError("We couldn't locate that address. Check it, or enter coordinates below.");
+          setError("We couldn't locate that address. Pick one from the suggestions as you type — or enter coordinates below.");
         } else {
           setError("Could not save the profile — check the fields and try again.");
         }
@@ -117,6 +107,7 @@ export default function SellerKitchenPage() {
       setNeedManualGeo(false);
       setLat("");
       setLng("");
+      setPicked(null);
       setNotice(form.address.trim() ? "Profile saved — new address geocoded and encrypted." : "Profile saved.");
       await load();
     } finally {
@@ -274,53 +265,34 @@ export default function SellerKitchenPage() {
             onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
           />
         </label>
-        <label>
+        <label htmlFor="kitchen-address">
           New address <span style={{ color: "var(--brand-muted)" }}>(optional — blank keeps the current one; encrypted, never public)</span>
-          <input
-            className="field"
-            placeholder="Street, city, state"
-            value={form.address}
-            onChange={(e) => {
-              setForm((f) => ({ ...f, address: e.target.value }));
-              setAddressSuggestion(null);
-              setNeedManualGeo(false);
-            }}
-            onBlur={() => setAddressSuggestion(uspsStyleSuggestion(form.address))}
-          />
         </label>
-        {addressSuggestion && (
-          <div
-            role="status"
-            style={{
-              background: "#fff7e8",
-              border: "1px solid #f1d39a",
-              borderRadius: 10,
-              padding: "12px 14px",
-              margin: "-4px 0 14px",
-              fontSize: 14,
-            }}
-          >
-            <strong>Suggested USPS-format address</strong>
-            <div style={{ margin: "5px 0 10px" }}>{addressSuggestion}</div>
-            <p style={{ margin: "0 0 10px", color: "var(--brand-muted)", fontSize: 13 }}>
-              Would you like to use this corrected format? Your address is still encrypted and never public.
-            </p>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <button
-                type="button"
-                className="btn-add"
-                onClick={() => {
-                  setForm((f) => ({ ...f, address: addressSuggestion }));
-                  setAddressSuggestion(null);
-                }}
-              >
-                Use suggested address
-              </button>
-              <button type="button" className="btn-add" onClick={() => setAddressSuggestion(null)}>
-                Keep my entry
-              </button>
-            </div>
-          </div>
+        <AddressAutocomplete
+          id="kitchen-address"
+          value={form.address}
+          onChange={(v) => {
+            setForm((f) => ({ ...f, address: v }));
+            // Typing again invalidates the previous pick; the address must be re-confirmed.
+            setPicked(null);
+            setNeedManualGeo(false);
+          }}
+          onPick={(pick) => {
+            setPicked(pick);
+            setNeedManualGeo(false);
+            setError(null);
+          }}
+        />
+        {picked ? (
+          <p style={{ margin: "0 0 16px", fontSize: 13, color: "var(--brand-green)" }}>
+            {picked.approximate
+              ? "✓ Placed at the nearest area we could find — your typed address is kept as-is."
+              : "✓ Address confirmed on the map — no coordinates needed."}
+          </p>
+        ) : (
+          <p style={{ margin: "0 0 16px", fontSize: 13, color: "var(--brand-muted)" }}>
+            Pick your address from the list so we can place your kitchen on the map.
+          </p>
         )}
         {needManualGeo && (
           <div style={{ display: "flex", gap: 12 }}>

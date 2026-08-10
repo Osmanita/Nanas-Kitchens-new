@@ -12,6 +12,7 @@ import { useCallback, useEffect, useState } from "react";
 import { apiFetch, getSession, Session } from "../../../lib/api";
 import { CUISINES } from "../../../lib/cuisines";
 import { money } from "../../../lib/cart";
+import AddressAutocomplete, { AddressPick } from "../../components/AddressAutocomplete";
 
 interface Kitchen {
   id: string;
@@ -796,13 +797,19 @@ function CreateKitchenCard({ onCreated }: { onCreated: () => void }) {
   const [lng, setLng] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Set once the seller picks a real place; carries the coordinates so the API never geocodes. */
+  const [picked, setPicked] = useState<AddressPick | null>(null);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
     setError(null);
     const payload: Record<string, unknown> = { ...form };
-    if (needManualGeo && lat && lng) {
+    if (picked && picked.label === form.address.trim()) {
+      // Picked from the suggestion list — send its coordinates so the server skips geocoding.
+      payload.lat = picked.lat;
+      payload.lng = picked.lon;
+    } else if (needManualGeo && lat && lng) {
       payload.lat = Number(lat);
       payload.lng = Number(lng);
     }
@@ -815,7 +822,7 @@ function CreateKitchenCard({ onCreated }: { onCreated: () => void }) {
       const body = await res.json().catch(() => ({}));
       if (body.message === "GEOCODING_FAILED") {
         setNeedManualGeo(true);
-        setError("We couldn't locate that address. Check it, or enter coordinates below.");
+        setError("We couldn't locate that address. Pick one from the suggestions as you type — or enter coordinates below.");
       } else {
         setError("Could not create the kitchen. Fill every field and try again.");
       }
@@ -857,19 +864,36 @@ function CreateKitchenCard({ onCreated }: { onCreated: () => void }) {
           Description
           <input className="field" required value={form.description} onChange={set("description")} />
         </label>
-        <label>
+        <label htmlFor="onboarding-address">
           Home address <span style={{ color: "var(--brand-muted)" }}>(encrypted; never shown publicly)</span>
-          <input
-            className="field"
-            required
-            placeholder="Street, city, state"
-            value={form.address}
-            onChange={(e) => {
-              setForm((f) => ({ ...f, address: e.target.value }));
-              setNeedManualGeo(false);
-            }}
-          />
         </label>
+        <AddressAutocomplete
+          id="onboarding-address"
+          required
+          value={form.address}
+          onChange={(v) => {
+            setForm((f) => ({ ...f, address: v }));
+            // Typing again invalidates the previous pick; the address must be re-confirmed.
+            setPicked(null);
+            setNeedManualGeo(false);
+          }}
+          onPick={(pick) => {
+            setPicked(pick);
+            setNeedManualGeo(false);
+            setError(null);
+          }}
+        />
+        {picked ? (
+          <p style={{ margin: "0 0 16px", fontSize: 13, color: "var(--brand-green)" }}>
+            {picked.approximate
+              ? "✓ Placed at the nearest area we could find — your typed address is kept as-is."
+              : "✓ Address confirmed on the map — no coordinates needed."}
+          </p>
+        ) : (
+          <p style={{ margin: "0 0 16px", fontSize: 13, color: "var(--brand-muted)" }}>
+            Pick your address from the list so we can place your kitchen on the map.
+          </p>
+        )}
         {needManualGeo && (
           <div style={{ display: "flex", gap: 12 }}>
             <label style={{ flex: 1 }}>
