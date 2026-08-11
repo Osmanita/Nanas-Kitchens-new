@@ -82,6 +82,11 @@ durdur (mvnw + fork iki java process açar).
 - `STRIPE_SECRET_KEY` — test modu restricted key (`rk_test_...`) çalışıyor; boşsa
   siparişler ödemesiz onaylanır.
 - `DELIVERY_PROVIDER=mock` — DoorDash (Story 4.2) developer hesabı gelene kadar sahte kurye.
+- `MCP_REGISTRATION_TOKEN` — boşsa MCP istemci kaydı herkese açık (RFC 7591 varsayılanı,
+  istemcilerin beklediği davranış). Set edilirse `/register` bu token'ı ister; internete
+  açılmadan önce set et. Zaten `client_id` almış istemciler etkilenmez.
+- `MCP_TRUSTED_PROXIES` — MCP sunucusunun önündeki, bizim sahip olduğumuz proxy sayısı.
+  Varsayılan `0` (`X-Forwarded-For` tamamen yok sayılır); planlanan tek ALB için `1`.
 - `JWT_SECRET`, `ADDRESS_ENC_KEY` — 32+ byte; her iki backend (NestJS + Java) aynı değeri
   paylaşır (token/şifreleme karşılıklı geçerli olsun diye). **2026-08-08: ikisinin de
   varsayılanı KALDIRILDI.** Önceden `application.yml` bunlar yoksa repoda yazan sabit
@@ -241,6 +246,11 @@ rollover job'ın işi DEĞİL (o sadece "hiç menüsü olmayan" günleri dolduru
 
 - **`apps/web`**: Vitest (`pnpm test`). `vitest.config.ts` + jsdom + Testing Library.
   `lib/cart.test.ts`, `lib/location.test.ts` — DB/network gerektirmez, saniyeler sürer.
+- **`apps/mcp-server`**: Vitest (`pnpm --filter mcp-server test`), `src/oauth.test.ts` —
+  49 test, ~1 sn, DB/network gerektirmez (platform API `fetch` ile stub'lanır). Testler
+  `tsconfig.json`'da `exclude`'da: vitest kendi tiplerini getiriyor ve suite'i kendisi
+  typecheck ediyor; build program'ında bırakılırsa `dist/oauth.test.js` yayınlanan çıktıya
+  sızıyor ve vitest'in kurulu olmadığı yerde `tsc` kırılıyor.
 - **`apps/api-java`**: JUnit 5 + AssertJ. `JwtServiceTest`, `AddressCryptoTest` — Spring
   context/DB gerektirmez. **Entegrasyon testleri 2026-08-09'da İLK KEZ gerçekten çalıştı**
   (29/29 yeşil); öncesinde "kod hazır, doğrulanmamış" durumundaydı ve aslında hiç
@@ -286,8 +296,8 @@ rollover job'ın işi DEĞİL (o sadece "hiç menüsü olmayan" günleri dolduru
   (rating yoksa hiçbir şey basılmıyor, uydurma yapılmıyor).
 - Gerçek ödeme (Stripe Connect satıcı ödemeleri), gerçek DoorDash/Grubhub, gerçek
   push/email bildirim kanalları (FCM/SES) — hepsi mock.
-- `apps/api` (NestJS) ve `apps/mcp-server`'da hiç test yok (apps/api artık "referans",
-  web sadece Java API'ye konuşuyor).
+- `apps/api` (NestJS) tarafında hiç test yok (artık "referans", web sadece Java API'ye
+  konuşuyor). `apps/mcp-server`'ın OAuth'u artık test altında, MCP tool'ları değil.
 - Bağımsız bir buyer hesap/profil sayfası yok (telefon `/settings/notifications`'ta,
   ama genel "hesabım" sayfası yok).
 - CI (GitHub Actions): pnpm sürümü package.json `packageManager`'dan gelir — workflow'a
@@ -378,10 +388,8 @@ değiştir.
   **Bu tür değişiklikleri incelemeyle değil, gerçekten istek atarak doğrula.**
 
 **Kalan açıklar (öncelikli):**
-- **MCP OAuth** (`apps/mcp-server/src/oauth.ts:246`) kendi kendine kayıt olan herhangi bir
-  istemciye **ham platform refresh token'ını** veriyor: MCP'ye kısıtlı değil, 30 günlük, tam
-  yetkili, istemci bazında iptal edilemiyor. `/register` kimlik doğrulamasız. **Sıradaki iş
-  bu** — ECS deployment'ından önce kapanmalı.
+- ~~**MCP OAuth** ham platform refresh token'ını dağıtıyor~~ — **kapatıldı (2026-08-10),
+  aşağıdaki "5. tur" bölümüne bak.**
 - `apps/web/lib/api.ts:65` — eşzamanlı 401'ler tek kullanımlık refresh token için yarışıyor;
   kaybeden istek yeni token'ları silip kullanıcıyı çıkış yaptırıyor.
 - Teslimat adresi artık yazılıyor ama **hiçbir yerden okunmuyor** — kuryeye/satıcıya
@@ -404,6 +412,71 @@ değiştir.
   Ayrıntı için "Test suite" bölümüne bak.
 - ⚠️ **Windows tuzağı, tekrar:** `Set-Content -Encoding utf8` bir `.java` dosyasına da BOM
   ekliyor ve derlemeyi bozuyor. Kaynak dosyaları PowerShell'le yazma — Edit/Write kullan.
+
+### 5. tur — MCP OAuth kapatıldı (2026-08-10)
+
+`apps/mcp-server/src/oauth.ts` yeniden yazıldı. Eski hali `/token`'dan **ham platform refresh
+token'ını** döndürüyordu; kayıt (RFC 7591 `/register`) kimlik doğrulamasız olduğu için bu,
+kendini kaydeden herkese 30 günlük, tam yetkili, istemci bazında iptal edilemeyen bir anahtar
+vermek demekti — `apps/web`'in tuttuğundan ayırt edilemeyen bir anahtar.
+
+- **İki token artık farklı şeyler.** `access_token` hâlâ platform access token'ı (resource
+  çağrılarına değiştirilmeden iletiliyor); `expires_in` o JWT'nin kendi `exp` claim'inden
+  okunuyor, sabit değil — eskiden 900 sn sabitti ve platform 8 saate çıkınca kaymıştı.
+  `refresh_token` ise **burada üretiliyor** ve platform için hiçbir anlam taşımıyor; gerçek
+  platform refresh token'ı `grants` içinde kalıyor, process'ten çıkmıyor.
+- **Rotasyon + aile imhası:** MCP refresh token'ları tek kullanımlık. Zaten döndürülmüş bir
+  token tekrar sunulursa kopyası sızmış demektir — o grant ailesi ve içindeki platform token'ı
+  komple imha edilir. RFC 7009 `/revoke` de aynı şeyi yapıyor, yani istemcinin "disconnect"i
+  gerçek. Token'lar SHA-256 ile indeksleniyor, açık halde tutulmuyor.
+- **Sınırlar ve süpürme:** kayıt/kod/grant sayıları ve gövde boyutu tavanlı, süpürme istek
+  üzerine tembel yapılıyor (timer YOK — `setInterval` process'i ayakta tutardı). Kullanılmayan
+  bir kayıt 1 saat yaşıyor, ilk kod kullanımında 30 güne terfi ediyor.
+- **Rate limit** `/register` ve login'de var. ⚠️ `X-Forwarded-For`'da **son** eleman
+  kullanılıyor, ilk değil: proxy kendi gördüğü adresi sona ekler, solundaki her şey
+  saldırgan metnidir. Kaç hop'a güvenildiği `MCP_TRUSTED_PROXIES` ile ayarlanır.
+- Onay sayfasına CSP + `frame-ancestors 'none'` + CORS başlıklarının kaldırılması, token
+  yanıtlarına `no-store` eklendi.
+
+**Mutasyon kontrolü yapıldı (2026-08-12) — testler gerçek.** Altı kontrol tek tek kasten
+bozulup suite'in kırmızıya döndüğü doğrulandı. Dördü yakalandı, **ikisi yeşil geçti** ve o
+boşluklar kapatıldı (45 → 49 test):
+
+- Ham platform refresh token'ını `/token`'dan geri döndür → 11 test kırmızı. Ama dikkat:
+  koruma tek bir assertion çiftine dayanıyor (`refresh_token` platformunkine eşit olmamalı).
+  Komşu iki test bu sızıntıyı YAKALAMAZ — biri platform token'ını *girdi* olarak reddetmeyi
+  test ediyor (dışarı verilmesini değil), diğeri `access_token`'ın değiştirilmeden
+  iletildiğini kasten doğruluyor. O assertion'ı zayıflatma.
+- Rotasyonu kaldır / aile imhasını kaldır → her biri 1 test. Test bu ikisini ayırıyor:
+  "tekrar reddedildi" ile "aile öldü" ayrı ayrı iddia ediliyor.
+- `expires_in`'i 900'e sabitle → 4 test. İki çağrı yeri de bağımsız korunuyor.
+- ~~`X-Forwarded-For`'da ilk elemanı al~~ → **yeşil geçiyordu.** Sebep: hiçbir test
+  `MCP_TRUSTED_PROXIES` set etmediği için `clientIp()` erken dönüyordu ve fonksiyonun geri
+  kalanı test altında ölü koddu. `TRUSTED_PROXIES` okuması modül seviyesinden `clientIp()`
+  içine taşındı (dotenv geç yüklenirse 0'a donma bug'ını da düzeltiyor) ve 4 satırlık bir
+  hop tablosu eklendi. Tablo sadece "son elemanı kullan"ı değil **hop sayısını** da
+  sabitliyor: off-by-one ve `TRUSTED_PROXIES<0` mutasyonları da yakalanıyor.
+- ~~Token'ları düz metin sakla~~ → **yeşil geçiyordu, en tehlikelisi buydu.** `sha256hex`
+  yazarken ve okurken simetrik uygulandığı için kimlik fonksiyonuna çevirmek dışarıdan
+  hiçbir farkla gözlemlenemiyor (45/45 yeşil, 42ms) — ama `refreshIdx` anahtarları canlı,
+  tekrar oynatılabilir token'a dönüşüyor ve alan adı hâlâ `tokenHashes` olduğu için kod
+  incelemesi de yakalamıyor. `__tokenStoreSnapshotForTests()` (test-only export, kopya
+  döndürür, `platformRefreshToken`'a asla dokunmaz) eklendi ve saklanan her anahtarın
+  64 hex karakter olduğu doğrulanıyor.
+
+Ayrıca eşzamanlı refresh testi eklendi: `ref.consumed = true` **await'ten önce** yakılmalı;
+altına alınırsa iki çakışan istek aynı platform token'ını harcıyor ve grant iki canlı
+token'la kalıyor. Isıran assertion `callsTo("/auth/refresh") === 1` — status çifti mutasyon
+altında da `[200, 400]` kalıyor, yani o çağrı sayımını silersen test işe yaramaz hale gelir.
+
+**Hâlâ testsiz kontroller** (bilinçli, sıradaki iş): `MCP_REGISTRATION_TOKEN` kapısı (env
+hiçbir testte set edilmiyor, o dal ölü kod), `REGISTER_RATE` ve pencere sonu ("limit kalkıyor
+mu" hiç doğrulanmıyor), `MAX_CLIENTS`/`MAX_GRANTS`/`MAX_FAMILY_TOKENS` tahliye yolları.
+`MAX_FAMILY_TOKENS=200` tahliyesinin güvenlik anlamı var: 200 rotasyondan sonra çok eski bir
+sızmış token "bilinmeyen" görünür ve aile imha edilmez.
+
+Hâlâ in-memory: process ölünce her istemci yeniden yetkilendirmek zorunda, çok örnekli
+deployment'tan (ECS) önce paylaşımlı bir store şart.
 
 ## İsim / domain brainstorm (2026-08-07)
 
