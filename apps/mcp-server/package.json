@@ -9,11 +9,11 @@
     "start": "node dist/server.js",
     "start:http": "TRANSPORT=http node dist/server.js",
     "lint": "eslint .",
-    "test": "echo mcp tests ok"
+    "test": "vitest run"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
     "zod": "^3.23.0"
   },
-  "devDependencies": { "tsx": "^4.19.0", "typescript": "^5.6.0", "@types/node": "^22.0.0" }
+  "devDependencies": { "tsx": "^4.19.0", "typescript": "^5.6.0", "@types/node": "^22.0.0", "vitest": "^2.1.8" }
 }

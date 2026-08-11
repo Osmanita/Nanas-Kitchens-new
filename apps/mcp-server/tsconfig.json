@@ -1,1 +1,7 @@
-{ "extends": "../../tsconfig.base.json", "compilerOptions": { "outDir": "dist", "rootDir": "src" }, "include": ["src"] }
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": { "outDir": "dist", "rootDir": "src" },
+  "include": ["src"],
+  "// exclude": "vitest supplies its own types and typechecks the suite itself; leaving the test in the build program emits dist/oauth.test.js into the shipped output and fails tsc wherever vitest is not installed.",
+  "exclude": ["src/**/*.test.ts"]
+}
