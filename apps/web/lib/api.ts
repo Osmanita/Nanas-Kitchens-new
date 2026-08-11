@@ -2,7 +2,7 @@
  * API client + token management (Phase 1 / auth).
  * Tokens live in localStorage — "access_token" matches what the chat page already reads.
  * apiFetch() attaches the bearer token and transparently retries once after a refresh
- * when the API answers 401 (access tokens expire after 15 minutes).
+ * when the API answers 401 (access tokens expire after 8 hours — app.jwt.access-token-ttl-minutes).
  */
 export const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
 
