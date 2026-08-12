@@ -4,12 +4,32 @@ Nanas' Kitchens: 10 mil yarıçapında ev mutfakları için kültür temalı yem
 BMAD dokümanları `docs/` altında; kod oradaki hikayeleri uygular.
 Demo pazaryeri artık **Powell, Ohio (43065)** merkezli (bkz. Seed verisi).
 
+> ## ⚠️ BU DOSYA HERKESE AÇIK BİR WEB SİTESİ OLARAK YAYINLANIYOR
+>
+> `.github/workflows/jekyll-gh-pages.yml` (GitHub'ın hiç değiştirilmemiş örnek şablonu)
+> her `main` push'unda **repo kökünü** (`source: ./`) Jekyll ile derleyip GitHub Pages'e
+> basıyor. Jekyll her `.md`'yi HTML'e çevirdiği için bu dosya şu anda canlı:
+> **https://ctuka.github.io/NanasKitchens/CLAUDE.html** (2026-08-12'de teyit edildi: 200,
+> 65 KB, içerik güncel). Repo zaten public, ama bu ondan fazlası — aranabilir, indekslenebilir
+> bir sayfa.
+>
+> **Buraya yazarken bunu varsay.** Sır, gerçek anahtar, kişisel veri, müşteri bilgisi yazma.
+> Halihazırda yayında olanlar: isim kısa listesi + "domain henüz alınmadı" notu (domain
+> squatting'e açık davetiye), demo şifresi, AWS/ECS dağıtım planı, ikinci repo URL'i ve
+> hangi güvenlik kontrollerinin test edilmediğinin listesi.
+>
+> Kapatmak için: repo Settings > Pages > Source = None, ya da `jekyll-gh-pages.yml`'ı sil.
+> İkisi de repo ayarı/commit'i gerektirir. **Şimdiye kadar yayınlanmış olan geri alınmaz.**
+
 **Git remote'ları — 2026-08-09'da düzeltildi, doküman bunu ters yazıyordu:**
-- `origin` = https://github.com/ctuka/NanasKitchens.git. Çalışılan dal **`osman`**;
-  `main` lokalde `origin/main`'i takip ediyor ama ondan çok ileride, o yüzden push
+- `origin` = https://github.com/ctuka/NanasKitchens.git. Çalışılan dal **`osman`**; push
   hedefi açıkça verilmeli: `git push origin main:osman`. Düz `git push` yanlış yere gider.
+  Repo dayıya (`ctuka`) ait; Osman'ın hesabı `Osmanita` ve yetkisi `push` var, `admin` YOK —
+  yani repo ayarları (visibility, branch protection, Pages) onun elinde değil.
 - https://github.com/Osmanita/Nanas-Kitchens-new.git ikinci bir kopya; remote olarak
-  tanımlı DEĞİL, oraya push elle yapılıyor (`git push <url> main:main`) ve geride kalıyor.
+  tanımlı DEĞİL, oraya push elle yapılıyor (`git push <url> main:main`). **2026-08-12'de
+  senkronlandı** (61 commit, `7adcfe9..a389b7f`) — uzun süre geride kalmıştı, tekrar
+  geride kalması normal. Orada Pages kapalı.
 - Yani "origin Osmanita'dır" cümlesi yanlıştı; nereye push edeceğini varsayma, `git remote -v`
   ve `git ls-remote --heads origin` ile teyit et.
 
@@ -73,6 +93,15 @@ durdur (mvnw + fork iki java process açar).
   4.85+ ile gözlemlendi) — `apps/api-java/src/test/java/.../support` altındaki entegrasyon
   testleri bu ortamda çalıştırılamadı, kod hazır ama doğrulanamadı. Normal bir Docker
   kurulumunda çalışması beklenir.
+- ⚠️ **2026-08-12: Docker'a hiç erişilemiyor, sebebi Testcontainers değil.** `docker info`
+  bile `permission denied ... npipe:////./pipe/dockerDesktopLinuxEngine` veriyor ve
+  `docker compose up -d` çalışmıyor. Sebep: **`oso13` kullanıcısı `docker-users` yerel
+  grubunda değil** (grupta sadece `cakma` var). Docker Desktop çalışıyor ve pipe'lar duruyor,
+  sorun tamamen izin. Düzeltmesi admin PowerShell ister ve **oturum kapat/aç şart** — grup
+  üyeliği giriş token'ına yazılıyor, Docker Desktop'ı yeniden başlatmak yetmez:
+  `Add-LocalGroupMember -Group "docker-users" -Member "oso13"`
+  Bu düzelene kadar Java entegrasyon testleri yerelde çalıştırılamaz; CI'da çalışıyorlar
+  (aşağıya bak), o yüzden pratikte tıkanmıyorsun ama "yerelde yeşil gördüm" diyemezsin.
 
 ## .env (gitignore'da — repoda YOK, sadece .env.example var)
 
@@ -254,7 +283,11 @@ rollover job'ın işi DEĞİL (o sadece "hiç menüsü olmayan" günleri dolduru
 - **`apps/api-java`**: JUnit 5 + AssertJ. `JwtServiceTest`, `AddressCryptoTest` — Spring
   context/DB gerektirmez. **Entegrasyon testleri 2026-08-09'da İLK KEZ gerçekten çalıştı**
   (29/29 yeşil); öncesinde "kod hazır, doğrulanmamış" durumundaydı ve aslında hiç
-  çalışamazdı (aşağıya bak).
+  çalışamazdı (aşağıya bak). **2026-08-12'de CI'da da doğrulandı** — `java` job'ı postgis
+  service container'ıyla `Tests run: 29, Failures: 0, Errors: 0` + `BUILD SUCCESS` verdi
+  (`OrdersServiceIntegrationTest`, `OrdersServiceDeliveryAddressIntegrationTest`,
+  `KitchensServiceSearchIntegrationTest` dahil). Yerelde Docker izni olmadığı için artık
+  **CI bu testlerin tek gerçek koşum yeri** — yerelde çalıştıramıyorsan CI'ya bak, tahmin etme.
 - **Nasıl çalıştırılır (bu makinede):** `IntegrationTest` artık iki yoldan veritabanı bulur:
   `TEST_DATABASE_URL` doluysa hazır bir Postgres+PostGIS, boşsa Testcontainers. Testcontainers
   bu makinede HÂLÂ çalışmıyor (docker-java Docker Desktop'ın pipe'larını göremiyor), o yüzden:
@@ -477,6 +510,36 @@ sızmış token "bilinmeyen" görünür ve aile imha edilmez.
 
 Hâlâ in-memory: process ölünce her istemci yeniden yetkilendirmek zorunda, çok örnekli
 deployment'tan (ECS) önce paylaşımlı bir store şart.
+
+### 6. tur — her şey main'e girdi (2026-08-12)
+
+PR [#3](https://github.com/ctuka/NanasKitchens/pull/3) merge edildi (`a389b7f`). `osman`
+dalındaki 33 commit `main`'e temiz fast-forward'la girdi, CI tamamen yeşildi. `osman` dalı
+silinmedi. Aynı commit ikinci kopyaya da push'landı.
+
+Merge öncesi tam bir denetim yapıldı; not edilmeye değer çıktıları:
+
+- **Sır taraması temiz.** 30 commit'in tam diff'i (524 KB) + working tree + yerel `.env`
+  tarandı: hiçbir yerde gerçek Stripe/Gemini/Anthropic/AWS/GitHub anahtarı veya private key
+  yok, `.env` hiç takip edilmemiş. Repodaki değerler kendini ele veren placeholder'lar.
+- **Ama `.env`'deki anahtarlar hâlâ o placeholder'ların kendisi.** `JWT_SECRET`,
+  `JWT_REFRESH_SECRET`, `ADDRESS_ENC_KEY` — üçü de repoda yayınlanmış literal'ler. Dağıtımdan
+  önce döndür. `ADDRESS_ENC_KEY`'i döndürmek **mevcut şifreli adresleri kullanılamaz hale
+  getirir**, yani önce onlara ne olacağına karar ver.
+- **`DELIVERY_WEBHOOK_SECRET` artık zorunlu ama yerel `.env`'de yok** → Java API bir sonraki
+  açılışta `Could not resolve placeholder` ile patlar. Yukarıdaki rotasyonla birlikte üret.
+- **`merge/nanas-chatbot` bu merge'den sonra 5 dosya / 7 hunk çakışacak** (CLAUDE.md,
+  SystemPrompt.java, CreateOrderRequest.java, chat/page.tsx, seller/kitchen/page.tsx).
+  Sıradan bağımsız — ters sıra da test edildi, maliyet aynı. ⚠️ İçinde çakışma işaretinin
+  göstermediği bir tuzak var: `chat/page.tsx`'te iki dal "alıcının konumunu chat agent'a
+  gönder"i bağımsız ve uyumsuz biçimde yazmış ama sadece TEK satırda çakışıyorlar, o yüzden
+  mekanik bir çözüm iki boru hattını da bağlı bırakıp birini öksüz koyuyor. Dahası
+  `renderRich` importu çakışma bloğunun İÇİNDE, tek kullanımı DIŞINDA otomatik merge oluyor —
+  import'ları `main` lehine çözmek (içgüdüsel seçim) hiçbir işaretin göstermediği bir
+  "undefined identifier" build hatası üretiyor. main'in dört importunu **ve** chatbot'un
+  `renderRich`'ini birlikte tut.
+- `AddressCryptoTest.java` eski adres anahtarı literal'ini fixture olarak sabit tutuyor.
+  Kendi başına zararsız ama gerçek anahtar malzemesiyle karışmasın diye yeniden adlandır.
 
 ## İsim / domain brainstorm (2026-08-07)
 
