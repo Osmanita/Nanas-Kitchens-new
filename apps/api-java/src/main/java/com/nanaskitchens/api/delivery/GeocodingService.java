@@ -22,7 +22,7 @@ import tools.jackson.databind.json.JsonMapper;
 @Service("deliveryGeocodingService")
 public class GeocodingService {
 
-    public record Point(double lat, double lng) {
+    public record Point(double lat, double lng, String countryCode) {
     }
 
     private static final Logger log = LoggerFactory.getLogger(GeocodingService.class);
@@ -61,7 +61,7 @@ public class GeocodingService {
 
     private Point lookup(String address) {
         try {
-            String url = "https://nominatim.openstreetmap.org/search?format=json&limit=1&q="
+            String url = "https://nominatim.openstreetmap.org/search?format=json&limit=1&addressdetails=1&q="
                     + URLEncoder.encode(address, StandardCharsets.UTF_8);
             HttpRequest request = HttpRequest.newBuilder(URI.create(url))
                     .header("User-Agent", "NanasKitchensDev/1.0 (delivery radius check)")
@@ -78,7 +78,11 @@ public class GeocodingService {
                 return null;
             }
             JsonNode first = results.get(0);
-            return new Point(first.get("lat").asDouble(), first.get("lon").asDouble());
+            JsonNode countryNode = first.path("address").path("country_code");
+            String countryCode = countryNode.isMissingNode() || countryNode.isNull()
+                    ? null
+                    : countryNode.asString();
+            return new Point(first.get("lat").asDouble(), first.get("lon").asDouble(), countryCode);
         } catch (Exception e) {
             log.warn("Geocoding failed, skipping radius check: {}", e.toString());
             return null;

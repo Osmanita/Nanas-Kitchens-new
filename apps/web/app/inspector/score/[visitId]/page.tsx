@@ -8,7 +8,7 @@
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { apiFetch, getSession } from "../../../../lib/api";
+import { apiFetch, ensureSession } from "../../../../lib/api";
 import type { Visit } from "../../visits/page";
 
 const SUB_SCORES: { key: string; label: string; hint: string }[] = [
@@ -36,32 +36,33 @@ export default function ScoringFormPage() {
   const fileInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    const s = getSession();
-    if (!s) {
-      router.replace(`/login?next=/inspector/score/${visitId}`);
-      return;
-    }
-    if (s.role !== "inspector") {
-      setVisit(null);
-      return;
-    }
-    apiFetch("/inspections/assigned").then(async (res) => {
-      if (!res.ok) return setVisit(null);
-      const visits: Visit[] = await res.json();
-      setVisit(visits.find((v) => v.id === visitId) ?? null);
-    });
-    // AC2 offline draft — restore any locally saved work for this visit.
-    try {
-      const saved = localStorage.getItem(draftKey(visitId));
-      if (saved) {
-        const draft = JSON.parse(saved);
-        if (draft.scores) setScores(draft.scores);
-        if (draft.photos) setPhotos(draft.photos);
-        setDraftRestored(true);
+    ensureSession().then((s) => {
+      if (!s) {
+        router.replace(`/login?next=/inspector/score/${visitId}`);
+        return;
       }
-    } catch {
-      /* corrupt draft — start fresh */
-    }
+      if (s.role !== "inspector") {
+        setVisit(null);
+        return;
+      }
+      apiFetch("/inspections/assigned").then(async (res) => {
+        if (!res.ok) return setVisit(null);
+        const visits: Visit[] = await res.json();
+        setVisit(visits.find((v) => v.id === visitId) ?? null);
+      });
+      // AC2 offline draft — restore any locally saved work for this visit.
+      try {
+        const saved = localStorage.getItem(draftKey(visitId));
+        if (saved) {
+          const draft = JSON.parse(saved);
+          if (draft.scores) setScores(draft.scores);
+          if (draft.photos) setPhotos(draft.photos);
+          setDraftRestored(true);
+        }
+      } catch {
+        /* corrupt draft — start fresh */
+      }
+    });
   }, [visitId, router]);
 
   // Persist the draft on every change (cheap, and survives crashes/offline).

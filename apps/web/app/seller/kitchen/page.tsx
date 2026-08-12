@@ -7,8 +7,9 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { apiFetch, getSession, Session } from "../../../lib/api";
+import { apiFetch, ensureSession, Session } from "../../../lib/api";
 import { CUISINES } from "../../../lib/cuisines";
+import PhoneSettingsCard from "../../components/PhoneSettingsCard";
 
 interface Kitchen {
   id: string;
@@ -46,9 +47,10 @@ export default function SellerKitchenPage() {
   const fileInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    const s = getSession();
-    setSession(s);
-    if (!s) router.replace("/login?next=/seller/kitchen");
+    ensureSession().then((s) => {
+      setSession(s);
+      if (!s) router.replace("/login?next=/seller/kitchen");
+    });
   }, [router]);
 
   const load = useCallback(async () => {
@@ -284,6 +286,8 @@ export default function SellerKitchenPage() {
           {busy ? "Saving…" : "Save profile"}
         </button>
       </section>
+
+      <PhoneSettingsCard />
 
       <section className="card" style={{ marginTop: 24 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>

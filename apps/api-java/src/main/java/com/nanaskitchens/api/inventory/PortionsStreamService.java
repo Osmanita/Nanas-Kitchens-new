@@ -80,7 +80,8 @@ public class PortionsStreamService {
         List<Map<String, Object>> items = db.sql("""
                 SELECT mi.id, mi."portionsRemaining", mi."portionsTotal"
                 FROM "MenuItem" mi JOIN "MenuDay" md ON md.id = mi."menuDayId"
-                WHERE md."kitchenId" = :kitchenId AND md.status = 'published' AND md.date = CURRENT_DATE
+                WHERE md."kitchenId" = :kitchenId AND md.status = 'published'
+                  AND md.date = (now() AT TIME ZONE 'UTC')::date
                 """)
                 .param("kitchenId", kitchenId)
                 .query((rs, n) -> itemPayload(

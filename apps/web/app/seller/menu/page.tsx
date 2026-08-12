@@ -9,7 +9,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
-import { apiFetch, getSession, Session } from "../../../lib/api";
+import { apiFetch, ensureSession, Session } from "../../../lib/api";
 import { CUISINES } from "../../../lib/cuisines";
 import { money } from "../../../lib/cart";
 
@@ -91,9 +91,10 @@ export default function SellerMenuPage() {
   const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
-    const s = getSession();
-    setSession(s);
-    if (!s) router.replace("/login?next=/seller/menu");
+    ensureSession().then((s) => {
+      setSession(s);
+      if (!s) router.replace("/login?next=/seller/menu");
+    });
   }, [router]);
 
   const loadKitchen = useCallback(async () => {

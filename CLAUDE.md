@@ -1,51 +1,115 @@
 # CLAUDE.md
 
 Nanas' Kitchens: 10 mil yarıçapında ev mutfakları için kültür temalı yemek pazarı.
-BMAD dokümanları `docs/` altında; kod oradaki hikayeleri uygular. Repo:
-https://github.com/Osmanita/Nanas-Kitchens-new (origin; eski `ctuka` remote'u referans).
+BMAD dokümanları `docs/` altında; kod oradaki hikayeleri uygular.
+Demo pazaryeri artık **Powell, Ohio (43065)** merkezli (bkz. Seed verisi).
+
+**Git remote'ları — 2026-08-09'da düzeltildi, doküman bunu ters yazıyordu:**
+- `origin` = https://github.com/ctuka/NanasKitchens.git. Çalışılan dal **`osman`**;
+  `main` lokalde `origin/main`'i takip ediyor ama ondan çok ileride, o yüzden push
+  hedefi açıkça verilmeli: `git push origin main:osman`. Düz `git push` yanlış yere gider.
+- https://github.com/Osmanita/Nanas-Kitchens-new.git ikinci bir kopya; remote olarak
+  tanımlı DEĞİL, oraya push elle yapılıyor (`git push <url> main:main`) ve geride kalıyor.
+- Yani "origin Osmanita'dır" cümlesi yanlıştı; nereye push edeceğini varsayma, `git remote -v`
+  ve `git ls-remote --heads origin` ile teyit et.
 
 ## Mimari (strangler migration)
 
 - **`apps/api-java`** — ana backend (:8080). Spring Boot 4 + Spring AI. Auth, kitchens,
   inventory, orders, payments (Stripe), delivery (mock kurye), chat agent, public tracking.
-- **`apps/web`** — Next.js 15 (:3000). Sayfalar: `/` (landing), `/login`, `/chat`
-  (AI sipariş asistanı), `/track/[id]` (kurye takip).
+- **`apps/web`** — Next.js 15 (:3000). Sayfalar: `/` (chat-first landing + mutfak listesi),
+  `/login`, `/chat` (AI sipariş asistanı), `/orders`, `/orders/[id]`, `/track/[id]` (kurye
+  takip), `/seller/*`, `/settings/notifications`, `/admin`, `/inspector/*`.
 - **`apps/api`** — eski NestJS API (:3001). Prisma şemasının/migration'ların sahibi;
   menu CRUD ve kalan hikayeler taşınana kadar duruyor. Seed buradan çalışır.
 - **`apps/mcp-server`** — MCP sunucusu (:3002).
 - PostGIS + Redis: `docker compose up -d`.
 
-## Çalıştırma
+## Çalıştırma (Windows dahil)
 
-```bash
+**Kısayol: `.\dev.cmd`** (ya da `.\scripts\dev.ps1`) — aşağıdaki adımların hepsini sırayla
+yapar: Docker'ı gerekiyorsa başlatır, `docker compose up -d`, Postgres hazır olana kadar bekler,
+`.env`'i process'e export eder (hem Spring hem NestJS bundan faydalanır), `prisma migrate deploy`
+çalıştırır, portlarda kalmış eski dev server'ları öldürür, sonra java-api/web/mcp'yi ayrı
+pencerelerde başlatır. Flag'ler: `-Install` (pnpm install), `-Seed`, `-WithNest` (eski NestJS
+API'yi de başlat), `-SkipMigrate`, `-Stop` (her şeyi durdur + container'ları kaldır).
+Elle yapmak istersen adımlar şöyle:
+
+```powershell
+# Node.js/pnpm yoksa: winget install OpenJS.NodeJS.LTS, sonra `npm install -g pnpm`
+# (corepack Program Files'a admin izni ister — npm ile kurmak daha az sürtünmeli)
 docker compose up -d
 pnpm install
+pnpm --filter api prisma:generate         # ŞART: @prisma/client'ın postinstall'ı workspace
+                                           # kökünden çalıştığı için şemayı bulamıyor ve model
+                                           # tipsiz bir stub client üretiyor; apps/api o zaman
+                                           # derlenmiyor. migrate deploy client üretmez.
 pnpm --filter api prisma:migrate:deploy   # şema Prisma'nındır, Hibernate dokunmaz
 (cd apps/api && pnpm seed)                # günün menülerini yayınlar (aşağıya bak)
-pnpm dev                                  # web :3000, eski api :3001, mcp :3002
-# Java API — Spring .env OKUMAZ, export şart:
-cd apps/api-java && set -a && . ../../.env && set +a && ./mvnw spring-boot:run
+pnpm --parallel --filter ./apps/* dev     # DİKKAT: package.json'daki 'pnpm dev' scripti tek
+                                           # tırnaklı glob kullanıyor, Windows cmd.exe'de bunu
+                                           # literal karakter sayıp hiç eşleşme bulamıyor —
+                                           # doğrudan bu komutu (tırnaksız glob) çalıştır.
+# Java API — Spring .env OKUMAZ, export şart (PowerShell'de):
+cd apps/api-java
+Get-Content ../../.env | % { if ($_ -match '^([^#=]+)=(.*)$') { [Environment]::SetEnvironmentVariable($Matches[1],$Matches[2],'Process') } }
+.\mvnw.cmd spring-boot:run
 ```
 
-Login: `demo-buyer@example.com` / `sifre1234` (buyer). Seed ayrıca `buyer@demo.com` /
-`demo1234` üretir. Java API'yi yeniden başlatırken: 8080'i dinleyen java process'ini
-durdur (mvnw + fork iki java process açar), sonra yukarıdaki komut.
+Login: `buyer@demo.com` / `demo1234` (buyer), `inspector@demo.com`, `admin@demo.com` aynı
+şifreyle, satıcılar `ayse@demo.com` vb. Java API'yi yeniden başlatırken önce eski process'i
+durdur (mvnw + fork iki java process açar).
+
+**Windows'a özgü tuzaklar:**
+- PowerShell `Get-Content -Raw` / `Set-Content` **`-Encoding utf8` olmadan** Türkçe karakterleri
+  bozar (mojibake). Metin dosyalarını (özellikle `seed.ts`) düzenlerken PowerShell yerine
+  Read/Write/Edit tool'larını kullan.
+- Node.js ilk kurulumda Windows Defender Firewall her yeni dev server için izin sorar — Public
+  profilde zaten Block kuralı var ama Private/Domain'de yok. Kalıcı çözüm (admin PowerShell):
+  `New-NetFirewallRule -DisplayName "Node.js dev" -Direction Inbound -Program "C:\program files\nodejs\node.exe" -Action Allow -Profile Private,Domain`
+- Docker Desktop'ın `docker` CLI'ı çalışsa da, Testcontainers/docker-java kütüphanesi hem named
+  pipe (`docker_engine`, `dockerDesktopLinuxEngine`) hem de TCP (`tcp://localhost:2375`,
+  ayarlardan açılsa bile) üzerinden **bozuk/boş bir stub yanıt** alabiliyor (Docker Desktop
+  4.85+ ile gözlemlendi) — `apps/api-java/src/test/java/.../support` altındaki entegrasyon
+  testleri bu ortamda çalıştırılamadı, kod hazır ama doğrulanamadı. Normal bir Docker
+  kurulumunda çalışması beklenir.
 
 ## .env (gitignore'da — repoda YOK, sadece .env.example var)
 
-- `GEMINI_API_KEY` — dev'de chat agent bununla çalışır (aistudio.google.com/apikey, ücretsiz).
+- `GEMINI_API_KEY` — dev'de chat agent bununla çalışır (aistudio.google.com/apikey, ücretsiz,
+  key'ler hesapta kalıcı görünür — kaybedilirse tekrar oradan alınabilir).
 - `AI_PROVIDER=google-genai` — tam sürümde `anthropic` yapılacak (iki starter da classpath'te).
-- `GEMINI_MODEL=gemini-3.1-flash-lite` — Google 2026-07'de `gemini-2.5-flash`'ı kapattı;
-  `gemini-flash-latest` free tier'da sık 503 veriyor. Model değişimi sadece env.
 - `STRIPE_SECRET_KEY` — test modu restricted key (`rk_test_...`) çalışıyor; boşsa
-  siparişler ödemesiz onaylanır. Ödemeler: dashboard.stripe.com/test/payments.
+  siparişler ödemesiz onaylanır.
 - `DELIVERY_PROVIDER=mock` — DoorDash (Story 4.2) developer hesabı gelene kadar sahte kurye.
+- `MCP_REGISTRATION_TOKEN` — boşsa MCP istemci kaydı herkese açık (RFC 7591 varsayılanı,
+  istemcilerin beklediği davranış). Set edilirse `/register` bu token'ı ister; internete
+  açılmadan önce set et. Zaten `client_id` almış istemciler etkilenmez.
+- `MCP_TRUSTED_PROXIES` — MCP sunucusunun önündeki, bizim sahip olduğumuz proxy sayısı.
+  Varsayılan `0` (`X-Forwarded-For` tamamen yok sayılır); planlanan tek ALB için `1`.
+- `JWT_SECRET`, `ADDRESS_ENC_KEY` — 32+ byte; her iki backend (NestJS + Java) aynı değeri
+  paylaşır (token/şifreleme karşılıklı geçerli olsun diye). **2026-08-08: ikisinin de
+  varsayılanı KALDIRILDI.** Önceden `application.yml` bunlar yoksa repoda yazan sabit
+  değerlere düşüyordu (adres anahtarı birebir `.env.example`'daki değerdi), NestJS ise
+  `"dev"` kullanıyordu — yani ayarlamayı unutan bir kurulum sağlıklı görünürken herkesin
+  üretebileceği token'ları kabul ediyordu. Artık bu iki değer olmadan Java API açılmıyor
+  ("Could not resolve placeholder 'JWT_SECRET'"), NestJS auth stratejisi de hata fırlatıyor.
+  `.\dev.cmd` bunları `.env`'den export ettiği için normal akışta sorun çıkmaz; elle
+  `mvnw` çalıştırıyorsan export etmeyi unutma.
 
-## Günlük menü tuzağı (her gün tekrarlar!)
+## Günlük menü — artık otomatik (ama bir tuzağı var)
 
-Menüler UTC gününe bağlı. UTC gece yarısından (yerel 03:00) sonra arama "porsiyon yok"
-döner. Çözüm: `(cd apps/api && set -a && . ../../.env && set +a && pnpm seed)` — o günün
-menülerini idempotent şekilde yayınlar. Otomatikleştirilmedi (aday iş).
+`MenuRolloverJob` (`apps/api-java/.../menus`) `@EnableScheduling` ile her 30 dakikada bir
+çalışıyor: UTC günü değiştiğinde, o gün için hiç menüsü olmayan her mutfağın son yayınlanmış
+menüsünü taze porsiyonlarla yeniden yayınlıyor. `app.menus.daily-rollover` (`MENU_DAILY_ROLLOVER`)
+ile kapatılabilir, varsayılan `true`. **Elle `pnpm seed` çalıştırmak artık şart değil** — ama
+job'ın ilk çalışması boot'tan 15 sn sonra, sonrası 30 dk'da bir; UTC gün değişimi tam o pencerede
+olursa birkaç dakika "porsiyon yok" görünebilir.
+
+Ayrıca: bir mutfağın **mevcut günün** porsiyonları test sırasında tükenirse (0'a düşerse), bu
+rollover job'ın işi DEĞİL (o sadece "hiç menüsü olmayan" günleri dolduruyor) — böyle bir durumda
+`UPDATE "MenuItem" SET "portionsRemaining" = "portionsTotal"` ile elle doldur ya da `pnpm seed`
+çalıştır (idempotent, üstüne yazmaz, sadece eksik günü doldurur).
 
 ## Chat agent nasıl çalışır (kritik bilgiler)
 
@@ -53,66 +117,391 @@ menülerini idempotent şekilde yayınlar. Otomatikleştirilmedi (aday iş).
 - **Tool sonuçları turlar arası taşınmaz** — frontend sadece metin geçmişi gönderir.
   SystemPrompt modele "ID gerekiyorsa tool'ları yeniden çağır" der; `getMenu` mutfak
   ADI da kabul eder (`KitchensService.resolveKitchenId`).
+- **Konum artık sohbetle sorulmuyor.** Buyer, Home sayfasındaki `LocationPickerModal`'dan
+  (harita + adres arama + "konumumu kullan") bir konum seçer (`lib/location.ts`,
+  localStorage). Bu konum her giden chat mesajına görünmez bir ek olarak iliştirilir:
+  `"...\n\n[buyer's selected browse location: <adres> (lat X, lng Y)]"` (bkz.
+  `apps/web/app/chat/page.tsx`'te `send()`). SystemPrompt bu notu hem `searchKitchens`
+  konumu hem de (aksi belirtilmedikçe) `deliveryAddress` olarak kabul etmesi için
+  yönlendirilmiş — agent bir daha "neredesin?" diye sormamalı.
+  ⚠️ Home→Chat handoff'unda (bkz. aşağı) konum state'i race condition'a açık: `send()`
+  artık bir `locationOverride` parametresi alıyor, mount effect'i konumu senkron okuyup
+  doğrudan `send(text, savedLocation)` ile geçiriyor — state güncellemesini beklemiyor.
+- **Home → Chat handoff:** Ana sayfadaki hero chat kutusuna yazılan ilk mesaj
+  `sessionStorage["pendingChatMessage"]`'a yazılıp `/chat`'e yönlendirilir; chat sayfası
+  mount olduğunda bunu okuyup otomatik gönderir (bkz. yukarıki race condition notu).
 - Yapılandırılmış kart protokolleri (SystemPrompt.java'da şemalar):
-  - Menü kartı: ```json {"type":"menu", items:[{photo, calories, ...}]}``` → chat'te
-    fotoğraflı/kalorili seçici, +/- adet, "Add to order" seçimi mesaj olarak geri yollar.
-  - Onay kartı: ```json {"confirmed":false, summary:{deliveryAddress...}, draft:{...}}```
-    → haritalı (Nominatim geocode + OSM iframe) onay kartı; Confirm draft'ı
-    `confirm:true` ile POST eder. Ham JSON balondan temizlenir.
+  - **Mutfak listesi kartı** (`{"type":"kitchens", items:[...]}`) — arama sonuçlarını
+    numaralı metin yerine fotoğraflı bir grid olarak gösterir; her `description` alanı
+    `Kitchen.description`'dan birebir kopyalanır (agent uydurmaz).
+  - **Menü kartı** (`{"type":"menu", items:[{photo, calories, ...}]}`) → fotoğraflı/kalorili
+    seçici, +/- adet, "Add to order" seçimi mesaj olarak geri yollar.
+  - **Onay kartı** (`{"confirmed":false, summary:{deliveryAddress...}, draft:{...}}`)
+    → haritalı (Nominatim geocode + OSM iframe, salt-okunur önizleme: `AddressMap`) onay
+    kartı. Kartın üstünde ayrıca **"Change address"** butonu var — `LocationPickerModal`'ı
+    `restrictToUS={false}` ile açar (ABD dışı da dahil, dünya çapında arama/harita), seçilen
+    adres hem `summary.deliveryAddress` hem `draft.deliveryAddress`'e client-side yazılır
+    (agent'a tekrar sormaya gerek kalmaz). Confirm, draft'ı `confirm:true` ile POST eder.
+  - **Sipariş onaylandı kartı** — artık metin değil, React state (`confirmedOrder`):
+    `/orders/{id}`'ye giden "View order" butonu + (varsa) "Track delivery" linki.
+  - Ham JSON hiçbir zaman balonda görünmez, hepsi parse edilip temizlenir.
+- **Selamlaşma:** SystemPrompt kural 10 — "selam"/"merhaba" gibi genel selamlara asla dini
+  bir ifadeyle (ör. "Aleyküm selam") karşılık vermez; sadece kullanıcı dini bir selam
+  verirse kısaca aynı şekilde karşılık verir.
 - Teslimat: adres zorunlu (`ADDRESS_REQUIRED`), kademeli geocode (baştan kelime düşürerek
-  Nominatim, 1.1s aralıklı) + PostGIS mesafe; >10 mil → `ADDRESS_OUT_OF_RANGE` (mil
-  bilgisiyle), çözülemeyen → `ADDRESS_NOT_FOUND`. Adres DB'de şifreli
-  (`Order.deliveryAddressEncrypted`, AddressCrypto).
-- Sipariş onayı transaction içinde: Stripe PaymentIntent (test modu, server-confirm,
-  `pm_card_visa`) + mock DeliveryJob (`/track/{externalId}` linki) + stok düşümü;
-  ödeme patlarsa hepsi geri alınır.
+  Nominatim, `addressdetails=1` ile ülke kodu da alınır) + PostGIS mesafe. Sırayla kontrol:
+  bulunamadı → `ADDRESS_NOT_FOUND`; ülke ABD değilse → `ADDRESS_OUTSIDE_US` (mesafe hesabından
+  ÖNCE, daha net bir mesaj için); >10 mil → `ADDRESS_OUT_OF_RANGE` (mil bilgisiyle). Adres
+  DB'de şifreli (`Order.deliveryAddressEncrypted`, AddressCrypto).
+- `CreateOrderRequest`'teki `courierTipCents`/`confirm`/`Item.qty` **kutulanmış tipler**
+  (`Integer`/`Boolean`), primitif değil — agent bazen bu alanları `null` gönderiyor
+  (ör. pickup siparişte bahşiş "geçerli değil" diye), primitif `int`/`boolean` bunu kabul
+  etmeyip ham bir Jackson hatası fırlatıyordu. Record'un compact constructor'ı null'ları
+  güvenli varsayılana çeviriyor (0 / false / qty:1) — yeni bir alan eklerken aynı deseni
+  kullan, primitif ekleme.
+- Sipariş onayı transaction içinde: PaymentIntent + stok düşümü; ödeme patlarsa hepsi geri
+  alınır. **DeliveryJob burada oluşmuyor** — kurye ancak satıcı siparişi `ready` yaptığında
+  çağrılıyor (`OrdersService.transition`, `deliveryService.createForOrder`). Bu doküman uzun
+  süre "onayda oluşuyor" diyordu; 2026-08-09'da düzeltildi.
+- **Mock sağlayıcı anında `succeeded` döner, Stripe DÖNMEZ**: `StripePaymentProvider`
+  `requires_payment_method` durumunda bir intent yaratır, yani `place()`
+  `{confirmed:false, requiresPayment:true, orderId, payment:{clientSecret...}}` döner ve
+  istemci ödemeyi Stripe Elements ile tamamlar; siparişi `confirmed`'a çeviren şey
+  `payment_intent.succeeded` webhook'u. (Doküman eskiden "server-confirm `pm_card_visa`"
+  diyordu — öyle bir kod yok.) Bu yüzden `AI_PROVIDER`/`app.payments.provider=stripe`'a
+  geçen her istemci akışının `requiresPayment` dalını ele alması ŞART.
 - Free tier RPM düşük, agent turu başına birkaç model çağrısı yapar; 429/503 retry
   application.yml'de. Yine de arada "try again" gerekebilir.
 
+## Auth / JWT
+
+- **Access token TTL: 8 saat** (`app.jwt.access-token-ttl-minutes: 480`, önceden 15 dk).
+  Refresh token 30 gün. `JwtService` constructor'ındaki fallback default'u da senkron tut.
+- `apps/web/lib/api.ts`: `apiFetch()` zaten 401'de sessizce refresh deneyip retry ediyordu;
+  ama sayfa guard'ları (`getSession()` senkron exp kontrolü) refresh denemeden direkt
+  login'e atıyordu. Artık `ensureSession()` var — expired ama refresh edilebilir bir
+  session'ı sessizce yeniler. Tüm `useEffect` tabanlı sayfa guard'ları (`orders`,
+  `seller/*`, `admin`, `inspector/*`, `settings/notifications`) buna geçirildi.
+- `/auth/me` (GET/PATCH) — herhangi bir rol için telefon numarası (`User.phone`) okur/yazar.
+  UI: `PhoneSettingsCard` bileşeni, hem `seller/kitchen` hem `settings/notifications`'ta.
+
 ## Spring Security dikkat
 
-- CORS: sadece `app.cors.web-origin` (default :3000).
+- CORS: `app.cors.allowed-origin-patterns`, varsayılan `http://localhost:*`
+  (`SecurityConfig` constructor'ında okunuyor). Burada uzun süre `app.cors.web-origin`
+  yazıyordu — öyle bir property hiç olmadı, 2026-08-08'de düzeltildi.
 - `dispatcherTypeMatchers(ASYNC).permitAll()` ŞART — kaldırılırsa SSE stream sonunda
   "Access Denied" ile bağlantı kopar (Firefox: "error in input stream").
-- Public rotalar: /health, /auth/*, GET /kitchens/**, GET /track/**.
+- Public rotalar: /health, /auth/register, /auth/login, /auth/refresh, GET /kitchens/**,
+  GET /track/*, POST /webhooks/delivery/*, POST /webhooks/stripe. `/auth/me` KORUMALI
+  (whitelist'te değil, kasıtlı). ⚠️ `/track` bu dokümanda public yazmasına rağmen
+  SecurityConfig'e hiç eklenmemişti — yani paylaşılan kurye takip linkleri giriş
+  istiyordu; 2026-08-08'de eklendi. Doküman ile SecurityConfig'i birlikte güncelle.
 
 ## Veri/DB kuralları
 
 - Şema ve migration'lar Prisma'nın (apps/api/prisma). Java'da `ddl-auto: none`,
   her identifier quoted camelCase. Yeni kolon = elle migration dosyası +
   `prisma migrate deploy` (migrate dev interaktif olduğundan çalışmaz).
-- SQL'de tarih karşılaştırması `(now() AT TIME ZONE 'UTC')::date` — `CURRENT_DATE`
-  JDBC oturumunun yerel saat diliminde çalışır ve gece yarısı bug'ı yaratır.
+- **`CURRENT_DATE` KULLANMA** — JDBC oturumunun yerel saat diliminde çalışır (bu makine
+  UTC+3), UTC'de hâlâ dün olsa bile yerelde gece yarısını geçtiği an "bugün" sorguları
+  boş döner. Her zaman `(now() AT TIME ZONE 'UTC')::date`. Bu oturumda iki gerçek prod
+  bug'ı buradan çıktı (`KitchensService.search`, `PortionsStreamService`); `EarningsController`
+  de düzeltildi. Yeni bir "bugün" sorgusu yazarken bunu unutma.
 - Cuisine filtresi lowercase tag'ler (`turkish`...); sorgu case-insensitive.
-- Seed mutfakları: SF (Ayse, Fatma, Mei, Rosa), Lefkoşa (Emine — Girne Cad.,
-  Havva — Dereboyu), Columbus OH (Zeynep, Abeba). Dish.photo `/public/dishes/*.jpg`
-  (Wikimedia CC), Dish.calories dolu; `dishMeta()` seed'de isimden eşler.
+- `KitchenSearchResult`'a `description` eklendi (Kitchen.description'dan) — chat'in mutfak
+  listesi kartı bunu kullanıyor, agent'ın uydurmasına gerek kalmasın diye.
+- **Seed script artık idempotent update de yapıyor**: `apps/api/prisma/seed.ts`'teki
+  `else` dalı (mutfak zaten varsa) `addressEncrypted` VE `description`'ı senkronize eder —
+  önceden sadece adres güncelleniyordu, mutfakları Powell'a taşırken description'lar bir
+  süre eski (Lefkoşa) metni gösterip durdu. Yeni bir alan taşınırken bu dalı da güncelle.
+- Seed mutfakları artık hepsi **Powell, OH (43065)** merkezli, birbirine 0–1.5 mil mesafede
+  (SF/Lefkoşa/Columbus değil): Ayse, Fatma, Emine, Havva, Zeynep (Türk), Mei (Çin),
+  Rosa (Meksika), Abeba (Etiyopya). Her `MenuItem` 500 porsiyon (demo'nun kolay tükenmemesi
+  için). Dish.photo `/public/dishes/*.jpg` (Wikimedia CC), Dish.calories dolu;
+  `dishMeta()` seed'de isimden eşler.
 
 ## Frontend tasarım sistemi
 
-- Vanilla CSS token'ları `apps/web/app/globals.css` (Tailwind YOK). Font: Outfit (next/font).
-- Palet: **olimpiyat renkleri** — mavi ana vurgu (#0081c8/#006ba6), beş halka rengi
-  `.hue-N` sınıflarıyla mutfak kartlarında döner. Açık/koyu tema `prefers-color-scheme`.
-- Kalıplar: `.island-nav` (yüzen cam nav), `.shell`/`.shell-core` (double-bezel),
-  `.chat-dock` (yüzen input), `.stagger` (kademeli giriş), `.cascade-card` (eğik kartlar).
+- Vanilla CSS token'ları `apps/web/app/globals.css` (Tailwind YOK).
+- İki paralel tasarım sistemi VARDI — artık birleşti: eski "brand-*" (yeşil/turuncu, `.card`,
+  `.field`, `.pill`) hâlâ mutfak grid'i / seller sayfaları gibi yerlerde kullanılıyor;
+  chat/login/global-header artık hepsi **glass/olimpiyat sistemine** (`--accent`, `--text-*`,
+  `.shell`/`.shell-core`, `.island-nav`, `.chip`, `.chat-dock`, `.hero-em`, `.halo-orb`)
+  geçirildi. Yeni bir auth/chat-benzeri sayfa yazarken glass sistemini kullan.
+- **Global Header artık `position: fixed`** (`.island-nav`, sadece `Header.tsx`'te kullanılıyor
+  — chat/track'in kendi kopyaları kaldırıldı, çakışan çift sticky-nav sorunu buradan çıktı).
+  Header kendi altına `<div style={{height:78}} />` spacer'ı ekliyor. **Header'ın yüksekliğini
+  değiştirirsen** hem bu spacer'ı hem de `chat/page.tsx`'teki
+  `height: "calc(100dvh - 78px)"` değerini güncellemeyi unutma — yoksa sayfa taşıp scroll'a
+  zorlar ve `.chat-dock` sabit kalmaz.
+- Konum seçici: `LocationPickerModal` + `LeafletMap` (Leaflet/OSM, API key gerekmiyor).
+  `restrictToUS` prop'u (varsayılan `true`) — Home'un "yakınımda" picker'ı ABD ile sınırlı,
+  chat'teki teslimat adresi picker'ı (`restrictToUS={false}`) dünya çapında.
 - Chat input hiç disable edilmez; stream sırasında gönderilen mesaj kuyruğa alınır
   (`queued` state) ve stream bitince otomatik gider; odak inputta tutulur.
 - Chat markdown renderer'ı sınırlı: bold/italik/link/bullet (`renderRich`). Ham HTML asla.
 
+## Test suite
+
+- **`apps/web`**: Vitest (`pnpm test`). `vitest.config.ts` + jsdom + Testing Library.
+  `lib/cart.test.ts`, `lib/location.test.ts` — DB/network gerektirmez, saniyeler sürer.
+- **`apps/mcp-server`**: Vitest (`pnpm --filter mcp-server test`), `src/oauth.test.ts` —
+  49 test, ~1 sn, DB/network gerektirmez (platform API `fetch` ile stub'lanır). Testler
+  `tsconfig.json`'da `exclude`'da: vitest kendi tiplerini getiriyor ve suite'i kendisi
+  typecheck ediyor; build program'ında bırakılırsa `dist/oauth.test.js` yayınlanan çıktıya
+  sızıyor ve vitest'in kurulu olmadığı yerde `tsc` kırılıyor.
+- **`apps/api-java`**: JUnit 5 + AssertJ. `JwtServiceTest`, `AddressCryptoTest` — Spring
+  context/DB gerektirmez. **Entegrasyon testleri 2026-08-09'da İLK KEZ gerçekten çalıştı**
+  (29/29 yeşil); öncesinde "kod hazır, doğrulanmamış" durumundaydı ve aslında hiç
+  çalışamazdı (aşağıya bak).
+- **Nasıl çalıştırılır (bu makinede):** `IntegrationTest` artık iki yoldan veritabanı bulur:
+  `TEST_DATABASE_URL` doluysa hazır bir Postgres+PostGIS, boşsa Testcontainers. Testcontainers
+  bu makinede HÂLÂ çalışmıyor (docker-java Docker Desktop'ın pipe'larını göremiyor), o yüzden:
+  ```powershell
+  docker compose up -d
+  # bir kereye mahsus: docker compose exec -T db psql -U culture -d postgres -c "CREATE DATABASE nanas_test"
+  $env:TEST_DATABASE_URL = "jdbc:postgresql://localhost:5432/nanas_test"
+  .\apps\api-java\mvnw.cmd -f apps\api-java\pom.xml test
+  ```
+  Harness her JVM'de `schema public`'i DROP edip migration'ları yeniden oynatır; bu yüzden adı
+  `_test` ile bitmeyen bir veritabanını kasıtlı olarak reddeder (dev DB'yi silmemek için).
+- **Neden hiç çalışamamıştı:** `MigrationRunner` SQL'i `split(";")` ile bölüyordu ve migration
+  dosyalarının **yorum satırlarındaki** noktalı virgülleri de bölüyordu (`0003_reviews`,
+  `0005_dish_requests`, `0009_refunds`, `0010_notification_preferences` — dördü de bozuluyordu).
+  Artık gerçek bir tarayıcı var: `--` ve `/* */` yorumları, `'...'`/`"..."` kaçışları ve
+  `$$`/`$tag$` gövdeleri içindeki `;` terminatör sayılmıyor.
+- `@SpringBootTest` **MOCK** olmalı (NONE DEĞİL): `SecurityConfig` `HttpSecurity` alan bir bean
+  tanımlıyor, onu sağlayan `@EnableWebSecurity` ise `@ConditionalOnWebApplication(SERVLET)`
+  altında geliyor — NONE ile context hiç ayağa kalkmıyor.
+- `TestData.insertKitchen` artık `addressEncrypted`'a **gerçek şifreli metin** yazıyor. Önceden
+  `'encrypted-address'` literal'i vardı; `detail()` onaylanmış bir pickup siparişinde adresi
+  çözmeye çalıştığı için `ADDRESS_DECRYPT_FAILED` ile patlıyordu.
+- Kapsam: `OrdersServiceIntegrationTest`, `KitchensServiceSearchIntegrationTest`,
+  `OrdersServiceCancelIntegrationTest`, `EarningsPayoutIntegrationTest`,
+  `OrdersServiceDeliveryAddressIntegrationTest`. Son üçü mutasyon testinden geçirildi (hata
+  kasten geri konup kırmızı oldukları görüldü) — yani gerçekten davranışı tutuyorlar.
+
 ## Bilinen eksikler / sıradaki adaylar
 
-- Story'ler: 2.1/2.2 menu CRUD taşınması, 4.x gerçek DoorDash, 5.2 kalanlar, 6.x, 7.x.
-- Sipariş geçmişi sayfası ve satıcı paneli yok.
-- Token 15 dk'da expire; refresh akışı UI'da yok (chat 401'de /login'e atar).
-- Günlük seed otomasyonu yok (yukarıdaki tuzak).
+- **"Rate restaurant" kapsamı netleşti ve uygulandı (2026-08-06):** her tamamlanmış sipariş
+  `/orders/[id]`'deki `ReviewCard` üzerinden puanlanabiliyordu; buna ek olarak artık
+  **6 aylık bir puanlama penceresi** var — `ReviewsService.REVIEW_WINDOW_MONTHS` (backend,
+  `Order.createdAt` + 6 ay, `REVIEW_WINDOW_EXPIRED` hatası) ve `apps/web/lib/reviewWindow.ts`
+  (`isWithinReviewWindow`, frontend'de `orders/page.tsx`'teki "★ Rate this order" rozeti ve
+  `orders/[id]/page.tsx`'teki `ReviewCard` formu için — pencere kapandıysa form yerine kapalı
+  mesajı gösteriliyor). **Chat'in mutfak arama kartına da rating eklendi (2026-08-06):**
+  `KitchenSearchResult`'a `ratingCount` eklendi (ratingAvg zaten vardı), `SystemPrompt.java`'daki
+  kart şeması ve `apps/web/app/chat/page.tsx`'teki kart artık `★ 4.5 (12)` gösteriyor
+  (rating yoksa hiçbir şey basılmıyor, uydurma yapılmıyor).
+- Gerçek ödeme (Stripe Connect satıcı ödemeleri), gerçek DoorDash/Grubhub, gerçek
+  push/email bildirim kanalları (FCM/SES) — hepsi mock.
+- `apps/api` (NestJS) tarafında hiç test yok (artık "referans", web sadece Java API'ye
+  konuşuyor). `apps/mcp-server`'ın OAuth'u artık test altında, MCP tool'ları değil.
+- Bağımsız bir buyer hesap/profil sayfası yok (telefon `/settings/notifications`'ta,
+  ama genel "hesabım" sayfası yok).
 - CI (GitHub Actions): pnpm sürümü package.json `packageManager`'dan gelir — workflow'a
   `version:` EKLEME (çift tanım hatası verir).
 - Kaloriler temsili dev verisi; Nominatim dev geocoder'ı (üretimde ücretli servise
-  geçilecek seam hazır: GeocodingService).
+  geçilecek seam hazır: GeocodingService — hem `kitchens` hem `delivery` paketinde AYRI
+  birer `GeocodingService` var, karıştırma).
+
+## Backlog / brainstorm (2026-08-06)
+
+Tam liste masaüstünde `yapilacaklar-nanas-kitchens.txt`. Özet:
+- **Yapılacaklar:** chat rating'i tarayıcıda gözle kontrol et; `apps/api` (NestJS) dev script'i
+  `pnpm --parallel` ile DATABASE_URL bulamadan çöküyor (web'i etkilemiyor ama seed buradan
+  çalışıyor); Docker artık çalıştığına göre Testcontainers entegrasyon testlerini tekrar dene;
+  bağımsız buyer hesap sayfası yok; ödeme/teslimat/bildirim entegrasyonları hâlâ mock.
+- **[YARIN — 2026-08-07] Deployment/altyapı:** AWS üzerinden domain alınacak (Route 53); ECS
+  (Elastic Container Service) üzerine container deployment kurulacak; CI/CD deployment pipeline
+  kurulacak; bir Jenkins server ayağa kaldırılacak.
+- **Fikirler:** satıcının yorumlara herkese açık cevap yazabilmesi, yoruma fotoğraf ekleme,
+  "bu haftanın favorisi" rozeti, puana göre sıralama, favoriler listesi, "son siparişi tekrar
+  ver", satıcı panelinde puan trend grafiği, düşük puanda satıcıya otomatik uyarı, sağlık
+  denetimi + müşteri puanının birleşik "güven skoru", kötüye kullanılan yorumu şikayet etme.
+
+## Hata avı ve düzeltmeler (2026-08-08)
+
+CI uzun süredir kırmızıydı; sebebi hatırlanan "multiple versions of pnpm" DEĞİLDİ (o zaten
+`d231581`'de çözülmüş). Gerçek sebep: `pnpm install` sırasında `@prisma/client`'ın postinstall'ı
+workspace kökünden çalıştığı için `apps/api/prisma/schema.prisma`'yı bulamıyor ve **model tipleri
+olmayan bir stub client** üretiyordu; `apps/api` bu yüzden 8 TS hatasıyla derlenmiyordu. Yerelde
+görünmüyordu çünkü node_modules'te eskiden üretilmiş gerçek client hatayı maskeliyor —
+**temiz bir klonda her zaman tekrar üretilir.** `ci.yml`'a ve `scripts/dev.ps1`'e
+`prisma:generate` adımı eklendi.
+
+Repo genelinde çok ajanlı bir hata avı yapıldı; düzeltilenler:
+
+- **Payout**: satıcıya kurye teslimat ücreti ($3.99) ve kurye bahşişi de ödeniyordu. Komisyon
+  zaten sadece yemek tutarından alınıyordu, yani kod kendi içinde tutarsızdı. `EarningsController`
+  içinde 3 formül de düzeltildi; `gross` artık yemek tutarı demek (satıcı ekranındaki
+  "gross − komisyon = kazanç" aritmetiği bu sayede bozulmadı, frontend'e dokunulmadı).
+  **Kod tabanındaki tek payout formülü budur** — Stripe Connect gerçek ödemelere geçince
+  parayı bu hesap taşıyacak.
+- **Reddedilmiş sipariş iptal edilebiliyordu**: `decline()` zaten porsiyonu iade edip parayı
+  geri gönderiyor, ama `declined` `FINAL_STATUSES`'te olmadığı için üstüne `cancel()`
+  çalışabiliyordu → porsiyon ikinci kez stoğa ekleniyor (olmayan stok satışa çıkıyor), zaten
+  iade edilmiş PaymentIntent'e ikinci refund gidiyordu.
+- **Teslimat adresi kaydedilmiyordu**: doğrulanıyor, geocode ediliyor, 10 mil kontrolünden
+  geçiriliyor, özete konuyor — ve INSERT'te yazılmıyordu. Şema'daki `deliveryAddressEncrypted`
+  alanı Java kaynağının hiçbir yerinde geçmiyordu. Artık AddressCrypto ile şifrelenip
+  yazılıyor. **Henüz kimse geri OKUMUYOR** — kuryeye/satıcıya göstermek ayrı bir iş.
+- `/track` public rotalara eklendi (yukarıya bak).
+- `JWT_SECRET` ve `ADDRESS_ENC_KEY` için sabit fallback'ler kaldırıldı (`.env` bölümüne bak).
+
+### ⚠️ Açık kalan hatalar — tam liste masaüstünde `yapilacaklar-nanas-kitchens.txt`
+
+Hata avı 24, denetim 12 ayrı sorun buldu; 10'u düzeltildi. **Secret'larla ilgili olanların
+hepsi kapandı** (2. tur, aynı gün): delivery webhook HMAC secret'ının sabit varsayılanı da
+kaldırıldı — kimlik doğrulaması olmayan `POST /webhooks/delivery/*` üzerindeki tek koruma
+oydu; `.env.example`'daki çalışan secret değerleri boşaltıldı; ve **hem Java hem Node artık
+32 karakterden kısa/boş `ADDRESS_ENC_KEY`'i reddediyor** (ikisi de sıfırla dolduruyordu,
+yani boş değer sessizce "32 sıfır byte" anahtar demekti ve config varsayılanını kaldırmayı
+da etkisiz bırakıyordu). Geçerli anahtarlar için türetme aynen korundu, iki backend
+birbirinin şifresini çözmeye devam ediyor.
+
+⚠️ Ama `.env`'deki `DELIVERY_WEBHOOK_SECRET` hâlâ repoda yayınlanmış olan değerin kendisi
+(27 karakter) ve `JWT_REFRESH_SECRET` sadece 13 karakter — gerçek dağıtımdan önce ikisini de
+değiştir.
+
+### 3. tur — CI/lint gerçek oldu, çift gönderim kapandı (2026-08-08/09)
+
+- **CI artık Java'yı derliyor ve test ediyor.** `ci.yml`'da ayrı bir `java` job'ı var
+  (temurin 21 + maven cache). `*IntegrationTest` bilerek dışarıda — Testcontainers'a bağlı
+  ve hiçbir yerde çalıştığı görülmedi; açmak ayrı bir iş. `mvnw` git'te LF + `100755`
+  saklandığı için Linux runner'da `chmod`/`sed` gerekmiyor.
+- **Lint gerçekten denetliyor.** Dört paketin dördü de tiyatroydu (web'de yapılandırılmamış
+  `next lint` CI'da interaktif soruya takılıp `|| echo lint-skip`'e düşüyordu, `apps/api`'de
+  eslint kurulu bile değildi). Artık tek bir flat config (`eslint.config.mjs`) ve kaçış
+  kapısı yok. **Açar açmaz buldu:** `packages/core/src/` içinde git'e commit'lenmiş derlenmiş
+  çıktı varmış ve `src/crypto.js` hâlâ kaldırılan sıfır-anahtar açığını taşıyormuş — silindi.
+- **Çift gönderim kapandı.** Idempotency anahtarı artık istek içeriğinden + bir dakikalık
+  kovadan türetiliyor (eskiden her denemede yeni UUID'ydi → iki sipariş, iki çekim, iki kez
+  stok düşümü). Chat onay butonunda in-flight koruması var; checkout'ta herhangi bir sepet
+  değişimi fiyat özetini geçersiz kılıyor.
+  ⚠️ Bu bölümde iki kez kendi hatamı yakaladım, ikisini de **çalışan API'ye istek atarak**:
+  (1) idempotency kontrolünü stok düşümünün altına koymuşum, ikinci istek stoğu düşürüp erken
+  dönüyor ve `@Transactional` bunu commit ediyordu — porsiyon sızıyordu; (2) dedup, `pending`
+  dışındaki her durumu "onaylandı" sayıyordu, iptal edilmiş sipariş dahil — iptal sonrası aynı
+  sepeti tekrar sipariş etmek ölü siparişi geri veriyor ve hiç yeni kayıt oluşturmuyordu.
+  **Bu tür değişiklikleri incelemeyle değil, gerçekten istek atarak doğrula.**
+
+**Kalan açıklar (öncelikli):**
+- ~~**MCP OAuth** ham platform refresh token'ını dağıtıyor~~ — **kapatıldı (2026-08-10),
+  aşağıdaki "5. tur" bölümüne bak.**
+- `apps/web/lib/api.ts:65` — eşzamanlı 401'ler tek kullanımlık refresh token için yarışıyor;
+  kaybeden istek yeni token'ları silip kullanıcıyı çıkış yaptırıyor.
+- Teslimat adresi artık yazılıyor ama **hiçbir yerden okunmuyor** — kuryeye/satıcıya
+  göstermek ayrı bir iş.
+
+### 4. tür — iptal penceresi, chat ödemesi, testlerin gerçekten çalışması (2026-08-09)
+
+- **`OrdersService.cancel()` daraltıldı.** `FINAL_STATUSES`'i reddetmek yerine artık
+  `CANCELLABLE = {pending, confirmed}` gerekiyor. Önceden `accepted`/`preparing`/`ready` iptal
+  edilebiliyordu: pişmiş yemeğin porsiyonları stoğa geri ekleniyor (hayali stok) ve
+  yemek+ücret+bahşiş tamamen iade ediliyordu. `orders/[id]/page.tsx` butonu da aynı kümeye
+  bağlandı — iki taraf birlikte güncellenmeli. Askıda kurye korkusu çıkmadı: `DeliveryJob`
+  zaten `ready`'de oluşuyor, yani iptal edilebilir durumlarda hiç kurye yok.
+- **Chat artık ödenmemiş siparişi "onaylandı" saymıyor.** `body.order ?? body` kalkti; ödeme
+  adımı `app/components/PaymentStep.tsx`'e çıkarıldı ve hem checkout hem chat aynı bileşeni
+  kullanıyor. Yeni bir sipariş verme akışı yazarken `requiresPayment` dalını ele almadan
+  "confirmed" gösterme.
+- **Entegrasyon testleri ilk kez çalıştı** ve CI'da da çalışıyor (`ci.yml`'daki `java` job'ına
+  postgis service container'ı eklendi, `-Dtest='!*IntegrationTest'` hariç tutması kaldırıldı).
+  Ayrıntı için "Test suite" bölümüne bak.
+- ⚠️ **Windows tuzağı, tekrar:** `Set-Content -Encoding utf8` bir `.java` dosyasına da BOM
+  ekliyor ve derlemeyi bozuyor. Kaynak dosyaları PowerShell'le yazma — Edit/Write kullan.
+
+### 5. tur — MCP OAuth kapatıldı (2026-08-10)
+
+`apps/mcp-server/src/oauth.ts` yeniden yazıldı. Eski hali `/token`'dan **ham platform refresh
+token'ını** döndürüyordu; kayıt (RFC 7591 `/register`) kimlik doğrulamasız olduğu için bu,
+kendini kaydeden herkese 30 günlük, tam yetkili, istemci bazında iptal edilemeyen bir anahtar
+vermek demekti — `apps/web`'in tuttuğundan ayırt edilemeyen bir anahtar.
+
+- **İki token artık farklı şeyler.** `access_token` hâlâ platform access token'ı (resource
+  çağrılarına değiştirilmeden iletiliyor); `expires_in` o JWT'nin kendi `exp` claim'inden
+  okunuyor, sabit değil — eskiden 900 sn sabitti ve platform 8 saate çıkınca kaymıştı.
+  `refresh_token` ise **burada üretiliyor** ve platform için hiçbir anlam taşımıyor; gerçek
+  platform refresh token'ı `grants` içinde kalıyor, process'ten çıkmıyor.
+- **Rotasyon + aile imhası:** MCP refresh token'ları tek kullanımlık. Zaten döndürülmüş bir
+  token tekrar sunulursa kopyası sızmış demektir — o grant ailesi ve içindeki platform token'ı
+  komple imha edilir. RFC 7009 `/revoke` de aynı şeyi yapıyor, yani istemcinin "disconnect"i
+  gerçek. Token'lar SHA-256 ile indeksleniyor, açık halde tutulmuyor.
+- **Sınırlar ve süpürme:** kayıt/kod/grant sayıları ve gövde boyutu tavanlı, süpürme istek
+  üzerine tembel yapılıyor (timer YOK — `setInterval` process'i ayakta tutardı). Kullanılmayan
+  bir kayıt 1 saat yaşıyor, ilk kod kullanımında 30 güne terfi ediyor.
+- **Rate limit** `/register` ve login'de var. ⚠️ `X-Forwarded-For`'da **son** eleman
+  kullanılıyor, ilk değil: proxy kendi gördüğü adresi sona ekler, solundaki her şey
+  saldırgan metnidir. Kaç hop'a güvenildiği `MCP_TRUSTED_PROXIES` ile ayarlanır.
+- Onay sayfasına CSP + `frame-ancestors 'none'` + CORS başlıklarının kaldırılması, token
+  yanıtlarına `no-store` eklendi.
+
+**Mutasyon kontrolü yapıldı (2026-08-12) — testler gerçek.** Altı kontrol tek tek kasten
+bozulup suite'in kırmızıya döndüğü doğrulandı. Dördü yakalandı, **ikisi yeşil geçti** ve o
+boşluklar kapatıldı (45 → 49 test):
+
+- Ham platform refresh token'ını `/token`'dan geri döndür → 11 test kırmızı. Ama dikkat:
+  koruma tek bir assertion çiftine dayanıyor (`refresh_token` platformunkine eşit olmamalı).
+  Komşu iki test bu sızıntıyı YAKALAMAZ — biri platform token'ını *girdi* olarak reddetmeyi
+  test ediyor (dışarı verilmesini değil), diğeri `access_token`'ın değiştirilmeden
+  iletildiğini kasten doğruluyor. O assertion'ı zayıflatma.
+- Rotasyonu kaldır / aile imhasını kaldır → her biri 1 test. Test bu ikisini ayırıyor:
+  "tekrar reddedildi" ile "aile öldü" ayrı ayrı iddia ediliyor.
+- `expires_in`'i 900'e sabitle → 4 test. İki çağrı yeri de bağımsız korunuyor.
+- ~~`X-Forwarded-For`'da ilk elemanı al~~ → **yeşil geçiyordu.** Sebep: hiçbir test
+  `MCP_TRUSTED_PROXIES` set etmediği için `clientIp()` erken dönüyordu ve fonksiyonun geri
+  kalanı test altında ölü koddu. `TRUSTED_PROXIES` okuması modül seviyesinden `clientIp()`
+  içine taşındı (dotenv geç yüklenirse 0'a donma bug'ını da düzeltiyor) ve 4 satırlık bir
+  hop tablosu eklendi. Tablo sadece "son elemanı kullan"ı değil **hop sayısını** da
+  sabitliyor: off-by-one ve `TRUSTED_PROXIES<0` mutasyonları da yakalanıyor.
+- ~~Token'ları düz metin sakla~~ → **yeşil geçiyordu, en tehlikelisi buydu.** `sha256hex`
+  yazarken ve okurken simetrik uygulandığı için kimlik fonksiyonuna çevirmek dışarıdan
+  hiçbir farkla gözlemlenemiyor (45/45 yeşil, 42ms) — ama `refreshIdx` anahtarları canlı,
+  tekrar oynatılabilir token'a dönüşüyor ve alan adı hâlâ `tokenHashes` olduğu için kod
+  incelemesi de yakalamıyor. `__tokenStoreSnapshotForTests()` (test-only export, kopya
+  döndürür, `platformRefreshToken`'a asla dokunmaz) eklendi ve saklanan her anahtarın
+  64 hex karakter olduğu doğrulanıyor.
+
+Ayrıca eşzamanlı refresh testi eklendi: `ref.consumed = true` **await'ten önce** yakılmalı;
+altına alınırsa iki çakışan istek aynı platform token'ını harcıyor ve grant iki canlı
+token'la kalıyor. Isıran assertion `callsTo("/auth/refresh") === 1` — status çifti mutasyon
+altında da `[200, 400]` kalıyor, yani o çağrı sayımını silersen test işe yaramaz hale gelir.
+
+**Hâlâ testsiz kontroller** (bilinçli, sıradaki iş): `MCP_REGISTRATION_TOKEN` kapısı (env
+hiçbir testte set edilmiyor, o dal ölü kod), `REGISTER_RATE` ve pencere sonu ("limit kalkıyor
+mu" hiç doğrulanmıyor), `MAX_CLIENTS`/`MAX_GRANTS`/`MAX_FAMILY_TOKENS` tahliye yolları.
+`MAX_FAMILY_TOKENS=200` tahliyesinin güvenlik anlamı var: 200 rotasyondan sonra çok eski bir
+sızmış token "bilinmeyen" görünür ve aile imha edilmez.
+
+Hâlâ in-memory: process ölünce her istemci yeniden yetkilendirmek zorunda, çok örnekli
+deployment'tan (ECS) önce paylaşımlı bir store şart.
+
+## İsim / domain brainstorm (2026-08-07)
+
+"Nanas' Kitchens" şu an **placeholder isim** — 45 yaş civarı hedef kitleye eski/yaşlı
+hissettirebileceği düşünülüyor. Route 53 domain alımı isim netleşene kadar bilinçli olarak
+ertelendi (AWS ECS/ALB domain olmadan da default AWS DNS adresiyle çalışır, isim netleşince
+tek değişiklik host-bazlı routing + Route 53 kaydı olacak, mimariye dokunmaz).
+
+Yön: kültür vurgusu değil **"world" temalı** bir isim (kod tabanındaki eski çalışma adı
+`culture_eats`/CulturEats'in aksine). Aday isimler (World + X kalıbı ağırlıklı):
+- **WorldBite** — şu ana kadarki favori.
+- Diğer adaylar: WorldBites, WorldKitchens, WorldTable, WorldPlate, WorldFare,
+  OneWorldKitchen, WorldFeast, WorldPantry, WorldDish, WorldFork, WorldSupper, WorldCrave,
+  WorldPlatter, PassportKitchen (world kelimesi yok ama seyahat/keşif hissi taşıyor).
+
+Henüz kesin karar yok, domain müsaitliği kontrol edilmedi. İsim netleşince: Route 53'ten
+domain al → ECS/ALB deployment'ı kaldığı yerden devam ettir → repodaki "Nanas' Kitchens"
+referanslarını (README, seed verisi, UI metinleri) güncelle.
 
 ## Test kullanıcı akışı (uçtan uca doğrulanmış)
 
-Chat: "turkish food near me" → konum sorar → "lefkosa" → mutfaklar → mutfak seç →
-fotoğraflı menü kartından seç → "delivery" + adres → haritalı onay kartı →
-Confirm → Stripe tahsilat + kurye + takip linki. Uzak adres (örn. Kalkanlı ~20 mil)
-mil bilgisiyle reddedilir.
+Ana sayfa: hero chat kutusuna "turkish food near me" yaz → otomatik `/chat`'e geçip
+gönderir → konum zaten seçiliyse sormadan mutfak listesi kartını gösterir → mutfak seç →
+fotoğraflı menü kartından seç → "delivery" + (konum zaten varsayılan adres) → onay kartı
+(adres değiştirilebilir, ABD dışı dahil) → Confirm → "Order confirmed" kartı → View order.
+Uzak adres (>10 mil) veya ABD dışı adres (ör. Adana, TR) net bir mesajla reddedilir.
+Seller: `ayse@demo.com` ile giriş → Today's Orders'ta günlük özet şeridi + kalem/fotoğraf
+bazlı sipariş kartları → Accept/Preparing/Ready/Complete.

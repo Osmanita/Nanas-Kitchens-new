@@ -1,5 +1,5 @@
 /**
- * Demo seed: 1 buyer + 3 sellers with attested kitchens near downtown SF,
+ * Demo seed: 1 buyer + 3 sellers with attested kitchens all around Powell, Ohio,
  * each with dishes and a published menu for today with live portions.
  *
  * Run: pnpm seed   (from apps/api)
@@ -11,8 +11,8 @@ import { encryptAddress } from "@culture-eats/core";
 
 const prisma = new PrismaClient();
 
-// Test location: Union Square, San Francisco
-const CENTER = { lat: 37.788, lng: -122.4075 };
+// Test location: downtown Powell, Ohio (43065)
+const CENTER = { lat: 40.1578, lng: -83.0752 };
 
 // Demo food photography (Unsplash hotlinks) until seller photo upload (S3) ships.
 const IMG = (id: string) => `https://images.unsplash.com/photo-${id}?w=800&q=60`;
@@ -23,13 +23,13 @@ const KITCHENS = [
     name: "Ayse's Anatolian Kitchen",
     cuisineTag: "turkish",
     description: "Home-style Turkish classics: manti, dolma, fresh pide.",
-    address: "350 Post St, San Francisco, CA",
+    address: "47 N Liberty St, Powell, OH",
     photos: [IMG("1529006557810-274b9b2fc783")],
-    lat: 37.7885, lng: -122.4078, // ~0.1 mi
+    lat: 40.1578, lng: -83.0752, // downtown Powell
     dishes: [
-      { name: "Manti (Turkish dumplings)", description: "Hand-folded beef dumplings with garlic yogurt", priceCents: 1450, dietaryTags: [], portions: 8, photo: IMG("1534422298391-e4f8c172dddb") },
-      { name: "Vegetarian Dolma", description: "Grape leaves stuffed with rice, herbs, pine nuts", priceCents: 1150, dietaryTags: ["vegetarian", "vegan"], portions: 12, photo: IMG("1512621776951-a57141f2eefd") },
-      { name: "Lahmacun", description: "Thin crispy flatbread with spiced minced lamb", priceCents: 950, dietaryTags: [], portions: 10, photo: IMG("1565299624946-b28f40a0ae38") },
+      { name: "Manti (Turkish dumplings)", description: "Hand-folded beef dumplings with garlic yogurt", priceCents: 1450, dietaryTags: [], portions: 500, photo: IMG("1534422298391-e4f8c172dddb") },
+      { name: "Vegetarian Dolma", description: "Grape leaves stuffed with rice, herbs, pine nuts", priceCents: 1150, dietaryTags: ["vegetarian", "vegan"], portions: 500, photo: IMG("1512621776951-a57141f2eefd") },
+      { name: "Lahmacun", description: "Thin crispy flatbread with spiced minced lamb", priceCents: 950, dietaryTags: [], portions: 500, photo: IMG("1565299624946-b28f40a0ae38") },
     ],
   },
   {
@@ -37,26 +37,25 @@ const KITCHENS = [
     name: "Fatma's Sarma House",
     cuisineTag: "turkish",
     description: "Hand-rolled sarma and stuffed vegetables, Aegean style.",
-    address: "450 Sutter St, San Francisco, CA",
-    lat: 37.7893, lng: -122.4071, // ~0.1 mi
+    address: "89 S Liberty St, Powell, OH",
+    lat: 40.1552, lng: -83.0745, // ~0.2 mi
     dishes: [
-      { name: "Yaprak Sarma", description: "Vine leaves hand-rolled with rice, currants, dill (8 pc)", priceCents: 1250, dietaryTags: ["vegetarian", "vegan"], portions: 14 },
-      { name: "Lahana Sarma", description: "Cabbage rolls with spiced beef and rice, lemon broth", priceCents: 1350, dietaryTags: [], portions: 10 },
-      { name: "Biber Dolma", description: "Bell peppers stuffed with herbed rice, served warm", priceCents: 1150, dietaryTags: ["vegetarian"], portions: 8 },
+      { name: "Yaprak Sarma", description: "Vine leaves hand-rolled with rice, currants, dill (8 pc)", priceCents: 1250, dietaryTags: ["vegetarian", "vegan"], portions: 500 },
+      { name: "Lahana Sarma", description: "Cabbage rolls with spiced beef and rice, lemon broth", priceCents: 1350, dietaryTags: [], portions: 500 },
+      { name: "Biber Dolma", description: "Bell peppers stuffed with herbed rice, served warm", priceCents: 1150, dietaryTags: ["vegetarian"], portions: 500 },
     ],
   },
-  // Cyprus cluster (Lefkoşa) — so "yakınımda" works for testers located there too.
   {
     seller: { email: "emine@demo.com" },
     name: "Emine's Manti Evi",
     cuisineTag: "turkish",
-    description: "El açması mantı ve ev yemekleri, Lefkoşa'nın kalbinde.",
-    address: "Girne Caddesi 42, Lefkoşa",
-    lat: 35.1856, lng: 33.3823,
+    description: "El açması manti ve ev yemekleri, Powell'ın kalbinde.",
+    address: "210 W Olentangy St, Powell, OH",
+    lat: 40.1620, lng: -83.0810, // ~0.5 mi
     dishes: [
-      { name: "El Açması Mantı", description: "Kıymalı el mantısı, sarımsaklı yoğurt, kızgın tereyağı", priceCents: 1400, dietaryTags: [], portions: 12 },
-      { name: "Kıbrıs Makarnası (Magarına Bulli)", description: "Tavuk suyunda makarna, rendelenmiş hellim", priceCents: 1100, dietaryTags: [], portions: 10 },
-      { name: "Mercimek Çorbası", description: "Günlük taze mercimek çorbası, limonla", priceCents: 600, dietaryTags: ["vegetarian", "vegan"], portions: 15 },
+      { name: "El Açması Mantı", description: "Kıymalı el mantısı, sarımsaklı yoğurt, kızgın tereyağı", priceCents: 1400, dietaryTags: [], portions: 500 },
+      { name: "Kıbrıs Makarnası (Magarına Bulli)", description: "Tavuk suyunda makarna, rendelenmiş hellim", priceCents: 1100, dietaryTags: [], portions: 500 },
+      { name: "Mercimek Çorbası", description: "Günlük taze mercimek çorbası, limonla", priceCents: 600, dietaryTags: ["vegetarian", "vegan"], portions: 500 },
     ],
   },
   {
@@ -64,26 +63,25 @@ const KITCHENS = [
     name: "Havva's Sarma Kosesi",
     cuisineTag: "turkish",
     description: "İncecik yaprak sarma ve dolma çeşitleri, anne usulü.",
-    address: "Dereboyu Caddesi 15, Lefkoşa",
-    lat: 35.1932, lng: 33.3711, // ~0.7 mi
+    address: "550 Home Rd, Powell, OH",
+    lat: 40.1690, lng: -83.0700, // ~1 mi
     dishes: [
-      { name: "Yaprak Sarma", description: "Zeytinyağlı incecik yaprak sarma (10 adet)", priceCents: 1200, dietaryTags: ["vegetarian", "vegan"], portions: 14 },
-      { name: "Etli Lahana Sarma", description: "Kıymalı lahana sarması, limonlu et suyu", priceCents: 1300, dietaryTags: [], portions: 10 },
-      { name: "Kolokas Dolması", description: "Kıbrıs usulü kolokas dolması", priceCents: 1250, dietaryTags: [], portions: 8 },
+      { name: "Yaprak Sarma", description: "Zeytinyağlı incecik yaprak sarma (10 adet)", priceCents: 1200, dietaryTags: ["vegetarian", "vegan"], portions: 500 },
+      { name: "Etli Lahana Sarma", description: "Kıymalı lahana sarması, limonlu et suyu", priceCents: 1300, dietaryTags: [], portions: 500 },
+      { name: "Kolokas Dolması", description: "Kıbrıs usulü kolokas dolması", priceCents: 1250, dietaryTags: [], portions: 500 },
     ],
   },
-  // Columbus, Ohio cluster — for remote testers in the US Midwest.
   {
     seller: { email: "zeynep@demo.com" },
     name: "Zeynep's Gozleme House",
     cuisineTag: "turkish",
     description: "Fresh gozleme off the sac, koftes and daily Turkish home plates.",
-    address: "1120 N High St, Columbus, OH",
-    lat: 39.9852, lng: -83.0007, // Short North
+    address: "112 E Olentangy St, Powell, OH",
+    lat: 40.1540, lng: -83.0690, // ~0.6 mi
     dishes: [
-      { name: "Gozleme (spinach & feta)", description: "Hand-rolled flatbread off the griddle, 2 pieces", priceCents: 1050, dietaryTags: ["vegetarian"], portions: 12 },
-      { name: "Izgara Kofte Plate", description: "Grilled beef koftes, bulgur pilaf, shepherd salad", priceCents: 1550, dietaryTags: [], portions: 10 },
-      { name: "Kabak Mucveri", description: "Zucchini fritters with garlic yogurt (4 pc)", priceCents: 900, dietaryTags: ["vegetarian"], portions: 8 },
+      { name: "Gozleme (spinach & feta)", description: "Hand-rolled flatbread off the griddle, 2 pieces", priceCents: 1050, dietaryTags: ["vegetarian"], portions: 500 },
+      { name: "Izgara Kofte Plate", description: "Grilled beef koftes, bulgur pilaf, shepherd salad", priceCents: 1550, dietaryTags: [], portions: 500 },
+      { name: "Kabak Mucveri", description: "Zucchini fritters with garlic yogurt (4 pc)", priceCents: 900, dietaryTags: ["vegetarian"], portions: 500 },
     ],
   },
   {
@@ -91,12 +89,12 @@ const KITCHENS = [
     name: "Abeba's Injera Kitchen",
     cuisineTag: "ethiopian",
     description: "Slow-simmered wots on fresh injera, Addis home style.",
-    address: "3411 Cleveland Ave, Columbus, OH",
-    lat: 40.0392, lng: -82.9701, // ~4.5 mi from Short North
+    address: "3200 Sawmill Pkwy, Powell, OH",
+    lat: 40.1450, lng: -83.0850, // ~1.2 mi
     dishes: [
-      { name: "Doro Wot", description: "Chicken stewed in berbere with a boiled egg, on injera", priceCents: 1600, dietaryTags: [], portions: 9 },
-      { name: "Misir Wot", description: "Red lentils in spiced berbere sauce, with injera", priceCents: 1200, dietaryTags: ["vegetarian", "vegan"], portions: 14 },
-      { name: "Veggie Combo", description: "Five vegetable wots arranged on fresh injera", priceCents: 1450, dietaryTags: ["vegetarian", "vegan"], portions: 10 },
+      { name: "Doro Wot", description: "Chicken stewed in berbere with a boiled egg, on injera", priceCents: 1600, dietaryTags: [], portions: 500 },
+      { name: "Misir Wot", description: "Red lentils in spiced berbere sauce, with injera", priceCents: 1200, dietaryTags: ["vegetarian", "vegan"], portions: 500 },
+      { name: "Veggie Combo", description: "Five vegetable wots arranged on fresh injera", priceCents: 1450, dietaryTags: ["vegetarian", "vegan"], portions: 500 },
     ],
   },
   {
@@ -104,13 +102,13 @@ const KITCHENS = [
     name: "Mei's Sichuan Home Cooking",
     cuisineTag: "chinese",
     description: "Bold Sichuan flavors from a family wok: mapo tofu, dan dan noodles.",
-    address: "728 Pacific Ave, San Francisco, CA",
+    address: "75 Village Green Dr, Powell, OH",
     photos: [IMG("1455619452474-d2be8b1e70cd")],
-    lat: 37.7967, lng: -122.4097, // ~0.6 mi
+    lat: 40.1610, lng: -83.0650, // ~1 mi
     dishes: [
-      { name: "Mapo Tofu", description: "Silky tofu in numbing-spicy chili bean sauce", priceCents: 1250, dietaryTags: ["vegetarian"], portions: 10, photo: IMG("1504674900247-0877df9cc836") },
-      { name: "Dan Dan Noodles", description: "Hand-pulled noodles, sesame-chili sauce, minced pork", priceCents: 1350, dietaryTags: [], portions: 8, photo: IMG("1476224203421-9ac39bcb3327") },
-      { name: "Cucumber Salad", description: "Smashed cucumber, garlic, black vinegar", priceCents: 650, dietaryTags: ["vegan", "gluten-free"], portions: 15, photo: IMG("1546069901-ba9599a7e63c") },
+      { name: "Mapo Tofu", description: "Silky tofu in numbing-spicy chili bean sauce", priceCents: 1250, dietaryTags: ["vegetarian"], portions: 500, photo: IMG("1504674900247-0877df9cc836") },
+      { name: "Dan Dan Noodles", description: "Hand-pulled noodles, sesame-chili sauce, minced pork", priceCents: 1350, dietaryTags: [], portions: 500, photo: IMG("1476224203421-9ac39bcb3327") },
+      { name: "Cucumber Salad", description: "Smashed cucumber, garlic, black vinegar", priceCents: 650, dietaryTags: ["vegan", "gluten-free"], portions: 500, photo: IMG("1546069901-ba9599a7e63c") },
     ],
   },
   {
@@ -118,13 +116,13 @@ const KITCHENS = [
     name: "Rosa's Cocina Oaxaquena",
     cuisineTag: "mexican",
     description: "Oaxacan mole, handmade tortillas, tamales like abuela made.",
-    address: "2889 Mission St, San Francisco, CA",
+    address: "980 Seldom Seen Rd, Powell, OH",
     photos: [IMG("1599974579688-8dbdd335c77f")],
-    lat: 37.7517, lng: -122.4183, // ~2.6 mi
+    lat: 40.1500, lng: -83.0600, // ~1.5 mi
     dishes: [
-      { name: "Mole Negro con Pollo", description: "Chicken in 28-ingredient black mole, rice, tortillas", priceCents: 1650, dietaryTags: [], portions: 6, photo: IMG("1565299585323-38d6b0865b47") },
-      { name: "Tamales de Rajas", description: "Poblano & cheese tamales in banana leaf (2 pc)", priceCents: 1050, dietaryTags: ["vegetarian"], portions: 12, photo: IMG("1551504734-5ee1c4a1479b") },
-      { name: "Tlayuda", description: "Crispy tortilla, beans, quesillo, avocado", priceCents: 1250, dietaryTags: ["vegetarian"], portions: 9, photo: IMG("1555939594-58d7cb561ad1") },
+      { name: "Mole Negro con Pollo", description: "Chicken in 28-ingredient black mole, rice, tortillas", priceCents: 1650, dietaryTags: [], portions: 500, photo: IMG("1565299585323-38d6b0865b47") },
+      { name: "Tamales de Rajas", description: "Poblano & cheese tamales in banana leaf (2 pc)", priceCents: 1050, dietaryTags: ["vegetarian"], portions: 500, photo: IMG("1551504734-5ee1c4a1479b") },
+      { name: "Tlayuda", description: "Crispy tortilla, beans, quesillo, avocado", priceCents: 1250, dietaryTags: ["vegetarian"], portions: 500, photo: IMG("1555939594-58d7cb561ad1") },
     ],
   },
 ];
@@ -185,10 +183,17 @@ async function main() {
           complianceAttestedAt: new Date(), // attested so it appears in search
         },
       });
-      await prisma.$executeRaw`
-        UPDATE "Kitchen" SET geo = ST_SetSRID(ST_MakePoint(${k.lng}, ${k.lat}), 4326)::geography
-        WHERE id = ${kitchen.id}`;
+    } else {
+      // Keep the source-of-truth fields in sync on re-seed (e.g. relocating the whole demo
+      // marketplace) rather than only ever setting them once at first creation.
+      await prisma.kitchen.update({
+        where: { id: kitchen.id },
+        data: { addressEncrypted: encryptAddress(k.address), description: k.description },
+      });
     }
+    await prisma.$executeRaw`
+      UPDATE "Kitchen" SET geo = ST_SetSRID(ST_MakePoint(${k.lng}, ${k.lat}), 4326)::geography
+      WHERE id = ${kitchen.id}`;
 
     // Published menu for today (idempotent via @@unique([kitchenId, date]))
     const existing = await prisma.menuDay.findUnique({
@@ -225,7 +230,7 @@ async function main() {
     console.log(`${k.name} — ${k.dishes.length} dishes, menu published for today`);
   }
 
-  console.log(`\nSearch from lat=${CENTER.lat} lng=${CENTER.lng} (Union Square, SF)`);
+  console.log(`\nSearch from lat=${CENTER.lat} lng=${CENTER.lng} (Powell, OH)`);
 }
 
 main()

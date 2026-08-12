@@ -2,7 +2,7 @@
  * API client + token management (Phase 1 / auth).
  * Tokens live in localStorage — "access_token" matches what the chat page already reads.
  * apiFetch() attaches the bearer token and transparently retries once after a refresh
- * when the API answers 401 (access tokens expire after 15 minutes).
+ * when the API answers 401 (access tokens expire after 8 hours — app.jwt.access-token-ttl-minutes).
  */
 export const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
 
@@ -41,6 +41,16 @@ export function getSession(): Session | null {
   } catch {
     return null;
   }
+}
+
+/** Like getSession(), but attempts a silent refresh first when the access token has expired
+ * locally — page guards call this so an expired-but-refreshable session doesn't bounce the
+ * user to /login for no reason (getSession() alone only checks the local exp claim). */
+export async function ensureSession(): Promise<Session | null> {
+  const s = getSession();
+  if (s) return s;
+  if (await tryRefresh()) return getSession();
+  return null;
 }
 
 async function tryRefresh(): Promise<boolean> {

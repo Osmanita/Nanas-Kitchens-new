@@ -6,7 +6,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { apiFetch, getSession, Session } from "../../../lib/api";
+import { apiFetch, ensureSession, Session } from "../../../lib/api";
 import { money } from "../../../lib/cart";
 
 interface Bucket {
@@ -40,9 +40,10 @@ export default function SellerEarningsPage() {
   const [data, setData] = useState<Earnings | undefined>(undefined);
 
   useEffect(() => {
-    const s = getSession();
-    setSession(s);
-    if (!s) router.replace("/login?next=/seller/earnings");
+    ensureSession().then((s) => {
+      setSession(s);
+      if (!s) router.replace("/login?next=/seller/earnings");
+    });
   }, [router]);
 
   useEffect(() => {

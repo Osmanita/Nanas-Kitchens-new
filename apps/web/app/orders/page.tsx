@@ -6,9 +6,10 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { apiFetch, getSession, Session } from "../../lib/api";
+import { apiFetch, ensureSession, Session } from "../../lib/api";
 import { CUISINE_ICONS } from "../../lib/cuisines";
 import { money } from "../../lib/cart";
+import { isWithinReviewWindow } from "../../lib/reviewWindow";
 
 interface OrderRow {
   id: string;
@@ -43,9 +44,10 @@ export default function OrdersPage() {
   const [orders, setOrders] = useState<OrderRow[] | null | undefined>(undefined);
 
   useEffect(() => {
-    const s = getSession();
-    setSession(s);
-    if (!s) router.replace("/login?next=/orders");
+    ensureSession().then((s) => {
+      setSession(s);
+      if (!s) router.replace("/login?next=/orders");
+    });
   }, [router]);
 
   useEffect(() => {
@@ -129,7 +131,8 @@ export default function OrdersPage() {
 function OrderCard({ order }: { order: OrderRow }) {
   const icon = CUISINE_ICONS[order.cuisineTag] ?? "🍽️";
   const placed = new Date(order.createdAt);
-  const needsReview = order.status === "completed" && !order.reviewed;
+  const needsReview =
+    order.status === "completed" && !order.reviewed && isWithinReviewWindow(order.createdAt);
 
   return (
     <Link
@@ -168,7 +171,29 @@ function OrderCard({ order }: { order: OrderRow }) {
         </span>
         {needsReview && <span className="badge hygiene">★ Rate this order</span>}
         {order.deliveryTrackingUrl && ACTIVE.has(order.status) && (
-          <span style={{ fontSize: 12, color: "var(--brand-blue, #0081c8)" }}>Courier on the way →</span>
+          <span
+            role="link"
+            tabIndex={0}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              window.open(order.deliveryTrackingUrl!, "_blank", "noopener,noreferrer");
+            }}
+            onKeyDown={(e) => {
+              if (e.key !== "Enter" && e.key !== " ") return;
+              e.preventDefault();
+              e.stopPropagation();
+              window.open(order.deliveryTrackingUrl!, "_blank", "noopener,noreferrer");
+            }}
+            style={{
+              fontSize: 12,
+              color: "var(--brand-blue, #0081c8)",
+              textDecoration: "underline",
+              cursor: "pointer",
+            }}
+          >
+            Courier on the way →
+          </span>
         )}
       </div>
     </Link>

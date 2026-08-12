@@ -1,6 +1,7 @@
 package com.nanaskitchens.api.orders;
 
 import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -14,8 +15,10 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
 /**
- * Story S6 (front-end-spec Earnings; FR21) — seller payout view. Payout = totalCents −
- * commissionCents (the 15% recorded on each Order at checkout). "Paid out" counts only
+ * Story S6 (front-end-spec Earnings; FR21) — seller payout view. Payout = the food subtotal
+ * (totalCents − deliveryFeeCents − tipCents) − commissionCents (the 15% recorded on each Order
+ * at checkout, itself charged on food only). The delivery fee is the courier provider's quote
+ * and the tip is the courier's, so neither is the kitchen's money. "Paid out" counts only
  * completed orders; "upcoming" is money committed but still in the cooking flow.
  * Refunded / declined / cancelled orders never count.
  */
@@ -50,7 +53,10 @@ public class EarningsController {
                          ELSE 'other'
                        END AS bucket,
                        count(*)::int AS orders,
-                       COALESCE(SUM("totalCents"),0)::bigint AS gross,
+                       -- the courier's delivery fee and the courier tip only pass through the
+                       -- kitchen's order; they are not its sales, which is also why OrdersService
+                       -- charges the 15% commission on the food subtotal alone
+                       COALESCE(SUM("totalCents" - "deliveryFeeCents" - "tipCents"),0)::bigint AS gross,
                        COALESCE(SUM("commissionCents"),0)::bigint AS commission
                 FROM "Order"
                 WHERE "kitchenId" = :kitchenId
@@ -75,11 +81,17 @@ public class EarningsController {
             }
         }
 
-        // Last 14 days of completed payout, oldest→newest, for a simple bar chart.
+        // Last 14 days of completed payout, oldest→newest, for a simple bar chart. UTC
+        // "today" throughout — CURRENT_DATE would use the JDBC session's local timezone
+        // (see CLAUDE.md's daily-menu-trap; same bug class as KitchensService.search).
         List<Map<String, Object>> daily = db.sql("""
                 SELECT (d::date)::text AS day,
-                       COALESCE(SUM(o."totalCents" - o."commissionCents"),0)::bigint AS net
-                FROM generate_series(CURRENT_DATE - INTERVAL '13 days', CURRENT_DATE, INTERVAL '1 day') d
+                       COALESCE(SUM(o."totalCents" - o."deliveryFeeCents" - o."tipCents"
+                                    - o."commissionCents"),0)::bigint AS net
+                FROM generate_series(
+                       (now() AT TIME ZONE 'UTC')::date - INTERVAL '13 days',
+                       (now() AT TIME ZONE 'UTC')::date,
+                       INTERVAL '1 day') d
                 LEFT JOIN "Order" o
                   ON o."kitchenId" = :kitchenId AND o.status = 'completed'
                   AND date_trunc('day', o."createdAt") = d
@@ -97,7 +109,8 @@ public class EarningsController {
 
         // Recent payouts feed the transactions list.
         List<Map<String, Object>> recent = db.sql("""
-                SELECT o.id, o."totalCents", o."commissionCents", o.fulfillment, o."createdAt",
+                SELECT o.id, o."totalCents", o."commissionCents",
+                       o."deliveryFeeCents", o."tipCents", o.fulfillment, o."createdAt",
                        (SELECT string_agg(dsh.name || ' x' || oi.qty, ', ' ORDER BY dsh.name)
                         FROM "OrderItem" oi
                         JOIN "MenuItem" mi ON mi.id = oi."menuItemId"
@@ -110,10 +123,14 @@ public class EarningsController {
                 """)
                 .param("kitchenId", kitchenId)
                 .query((rs, n) -> {
-                    long net = rs.getLong("totalCents") - rs.getLong("commissionCents");
+                    // gross = what the kitchen actually sold, i.e. without the courier's
+                    // delivery fee and tip, so gross - commission still equals the payout
+                    long sellerGross = rs.getLong("totalCents")
+                            - rs.getLong("deliveryFeeCents") - rs.getLong("tipCents");
+                    long net = sellerGross - rs.getLong("commissionCents");
                     Map<String, Object> row = new LinkedHashMap<>();
                     row.put("id", rs.getString("id"));
-                    row.put("grossCents", rs.getInt("totalCents"));
+                    row.put("grossCents", sellerGross);
                     row.put("commissionCents", rs.getInt("commissionCents"));
                     row.put("netCents", net);
                     row.put("fulfillment", rs.getString("fulfillment"));
@@ -128,7 +145,7 @@ public class EarningsController {
         result.put("upcoming", upcoming);
         result.put("daily", daily);
         result.put("recent", recent);
-        result.put("today", LocalDate.now().toString());
+        result.put("today", LocalDate.now(ZoneOffset.UTC).toString());
         return result;
     }
 

@@ -5,13 +5,12 @@
  * through POST /orders (confirm=false then true — the same FR15 guardrail the agent uses).
  * When the server runs the real Stripe provider it answers requiresPayment + clientSecret,
  * and the PaymentElement step below settles it; the mock provider confirms instantly. */
-import { Elements, PaymentElement, useElements, useStripe } from "@stripe/react-stripe-js";
-import { loadStripe } from "@stripe/stripe-js";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { API, apiFetch, getSession } from "../../lib/api";
 import { Cart, clearCart, getCart, money, setQty, subscribeCart } from "../../lib/cart";
+import PaymentStep, { PendingPayment } from "../components/PaymentStep";
 
 interface ReadyWindow {
   start: string;
@@ -30,12 +29,6 @@ interface PricedSummary {
   deliveryFeeCents: number;
   courierTipCents: number;
   totalCents: number;
-}
-
-interface PendingPayment {
-  orderId: string;
-  clientSecret: string;
-  publishableKey: string;
 }
 
 type Fulfillment = "pickup" | "delivery";
@@ -76,7 +69,15 @@ export default function CheckoutPage() {
   useEffect(() => {
     setCart(getCart());
     setReady(true);
-    return subscribeCart(() => setCart(getCart()));
+    // Every other input that feeds the price - slot, fulfillment, address, tip - clears the
+    // priced summary when it changes. The quantity steppers go through setQty() instead, so
+    // they did not, and you could review a total, change the quantities, and then confirm a
+    // different one. Invalidate on any cart change rather than patching the two buttons: the
+    // cart is shared across tabs, and subscribeCart already listens for that too.
+    return subscribeCart(() => {
+      setCart(getCart());
+      setSummary(null);
+    });
   }, []);
 
   useEffect(() => {
@@ -316,7 +317,11 @@ export default function CheckoutPage() {
       )}
 
       {payment ? (
-        <PaymentStep payment={payment} totalCents={summary?.totalCents ?? subtotal} />
+        <PaymentStep
+          payment={payment}
+          totalCents={summary?.totalCents ?? subtotal}
+          onPaid={clearCart}
+        />
       ) : !summary ? (
         <>
           <div style={{ display: "flex", justifyContent: "space-between", margin: "16px 0" }}>
@@ -377,70 +382,3 @@ export default function CheckoutPage() {
   );
 }
 
-/** Story 3.4 — Stripe PaymentElement over the clientSecret the API returned. The pending
- * order already holds the portions; paying settles it via the payment_intent.succeeded
- * webhook. NFR6: the card form is Stripe's — no PAN ever reaches our servers. */
-function PaymentStep({ payment, totalCents }: { payment: PendingPayment; totalCents: number }) {
-  const stripePromise = useMemo(() => loadStripe(payment.publishableKey), [payment.publishableKey]);
-  return (
-    <div className="card" style={{ marginTop: 16, borderColor: "var(--brand-orange)" }}>
-      <h2 style={{ fontSize: 17, color: "var(--brand-green)", marginTop: 0 }}>Payment</h2>
-      <Elements
-        stripe={stripePromise}
-        options={{
-          clientSecret: payment.clientSecret,
-          appearance: { variables: { colorPrimary: "#e8720c" } },
-        }}
-      >
-        <PaymentForm orderId={payment.orderId} totalCents={totalCents} />
-      </Elements>
-    </div>
-  );
-}
-
-function PaymentForm({ orderId, totalCents }: { orderId: string; totalCents: number }) {
-  const stripe = useStripe();
-  const elements = useElements();
-  const router = useRouter();
-  const [payError, setPayError] = useState<string | null>(null);
-  const [paying, setPaying] = useState(false);
-
-  async function pay() {
-    if (!stripe || !elements) return;
-    setPaying(true);
-    setPayError(null);
-    // Cards settle inline; redirect-based methods return here via return_url. Either way
-    // the order page shows "payment processing" until the webhook confirms it.
-    const { error } = await stripe.confirmPayment({
-      elements,
-      confirmParams: { return_url: `${window.location.origin}/orders/${orderId}` },
-      redirect: "if_required",
-    });
-    if (error) {
-      setPayError(error.message ?? "Payment failed — try another payment method.");
-      setPaying(false);
-      return;
-    }
-    clearCart();
-    router.push(`/orders/${orderId}`);
-  }
-
-  return (
-    <>
-      {payError && (
-        <div className="form-error" role="alert">
-          {payError}
-        </div>
-      )}
-      <PaymentElement />
-      <button
-        className="btn-primary"
-        style={{ marginTop: 16 }}
-        disabled={!stripe || !elements || paying}
-        onClick={pay}
-      >
-        {paying ? "Paying…" : `Pay ${money(totalCents)}`}
-      </button>
-    </>
-  );
-}

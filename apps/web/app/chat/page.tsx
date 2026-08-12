@@ -2,7 +2,10 @@
 
 import { FormEvent, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { apiFetch, clearTokens } from "../../lib/api";
+import { apiFetch } from "../../lib/api";
+import { getLocation, saveLocation, type PickedLocation } from "../../lib/location";
+import LocationPickerModal from "../components/LocationPickerModal";
+import PaymentStep, { type PendingPayment } from "../components/PaymentStep";
 
 interface Message {
   role: "user" | "assistant";
@@ -40,9 +43,30 @@ interface MenuCard {
   }[];
 }
 
+interface KitchenListCard {
+  type: "kitchens";
+  items: {
+    id: string;
+    name: string;
+    cuisineTag: string;
+    distanceMiles: number;
+    portionsLeftToday: number;
+    photo?: string | null;
+    description?: string | null;
+    ratingAvg?: number | null;
+    ratingCount?: number | null;
+  }[];
+}
+
+interface ConfirmedOrder {
+  id: string;
+  readySlot?: string;
+  trackingUrl?: string | null;
+}
+
 const SUGGESTIONS = [
   "Find Turkish food near me",
-  "What's cooking in Lefkoşa today?",
+  "What's cooking in Powell today?",
   "I want to order sarma",
 ];
 
@@ -197,7 +221,15 @@ export default function ChatPage() {
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [pendingSummary, setPendingSummary] = useState<OrderSummary | null>(null);
+  const [confirming, setConfirming] = useState(false);
   const [pendingMenu, setPendingMenu] = useState<MenuCard | null>(null);
+  const [pendingKitchens, setPendingKitchens] = useState<KitchenListCard | null>(null);
+  const [confirmedOrder, setConfirmedOrder] = useState<ConfirmedOrder | null>(null);
+  // Set when POST /orders answers requiresPayment (the real Stripe provider): the order is
+  // placed but pending, so the card below has to settle it before anything is "confirmed".
+  const [pendingPayment, setPendingPayment] = useState<
+    (PendingPayment & { totalCents: number }) | null
+  >(null);
   const [picked, setPicked] = useState<Record<string, number>>({});
   const [queued, setQueued] = useState<string | null>(null);
   const [recording, setRecording] = useState(false);
@@ -208,6 +240,35 @@ export default function ChatPage() {
   const recordTimerRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  const [location, setLocation] = useState<PickedLocation | null>(null);
+  const [locationPickerOpen, setLocationPickerOpen] = useState(false);
+  // Separate from the browse-location picker above: this one edits the delivery address on
+  // a pending order, and isn't US-restricted — a buyer's real address can be anywhere.
+  const [deliveryPickerOpen, setDeliveryPickerOpen] = useState(false);
+
+  function confirmLocation(loc: PickedLocation) {
+    saveLocation(loc);
+    setLocation(loc);
+    setLocationPickerOpen(false);
+  }
+
+  // One effect, not two: reading location here and handing it straight to send() as an
+  // override avoids a same-tick race where a separate "load location" effect's setState
+  // hasn't re-rendered yet by the time an auto-send effect fires (see send()'s doc comment).
+  useEffect(() => {
+    const savedLocation = getLocation();
+    setLocation(savedLocation);
+
+    // Home hands off the buyer's first message via sessionStorage (page.tsx's goToChat) so
+    // arriving here immediately continues the conversation instead of an empty screen.
+    const pending = sessionStorage.getItem("pendingChatMessage");
+    if (pending) {
+      sessionStorage.removeItem("pendingChatMessage");
+      send(pending, savedLocation);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -227,18 +288,18 @@ export default function ChatPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [streaming]);
 
-  function signOut() {
-    clearTokens();
-    window.location.href = "/login";
-  }
-
-  async function send(text: string) {
+  // locationOverride lets the mount-time auto-send (home → chat handoff) pass a freshly
+  // read location straight through — the `location` state var from the OTHER mount effect
+  // is still null at that point (setState there hasn't re-rendered yet), so relying on the
+  // closure alone silently dropped the hint on that very first message.
+  async function send(text: string, locationOverride?: PickedLocation | null) {
     if (!text.trim() || streaming) return;
     const next: Message[] = [...messages, { role: "user", content: text }];
     setMessages(next);
     setInput("");
     setStreaming(true);
     setPendingMenu(null);
+    setPendingKitchens(null);
     setPicked({});
 
     let assistantText = "";
@@ -248,10 +309,25 @@ export default function ChatPage() {
     };
 
     try {
+      // The picked location (Home page or this page's own picker) rides along as a hidden
+      // suffix on the outgoing user turn only — the visible bubble stays just what was typed,
+      // but the agent sees it every turn and never needs to ask (SystemPrompt rule 6).
+      const effectiveLocation = locationOverride !== undefined ? locationOverride : location;
+      const payloadMessages = effectiveLocation
+        ? next.map((m, i) =>
+            i === next.length - 1
+              ? {
+                  ...m,
+                  content: `${m.content}\n\n[buyer's selected browse location: ${effectiveLocation.label} (lat ${effectiveLocation.lat}, lng ${effectiveLocation.lng})]`,
+                }
+              : m,
+          )
+        : next;
+
       // apiFetch refreshes the access token and retries once on 401 (15-min expiry).
       const res = await apiFetch(`/chat/stream`, {
         method: "POST",
-        body: JSON.stringify({ messages: next }),
+        body: JSON.stringify({ messages: payloadMessages }),
       });
 
       if (res.status === 401 || res.status === 403) {
@@ -290,6 +366,10 @@ export default function ChatPage() {
           let handled = false;
           if (parsed.type === "menu" && Array.isArray(parsed.items)) {
             setPendingMenu(parsed);
+            setPendingKitchens(null);
+            handled = true;
+          } else if (parsed.type === "kitchens" && Array.isArray(parsed.items)) {
+            setPendingKitchens(parsed);
             handled = true;
           } else if (parsed.confirmed === false && parsed.summary) {
             setPendingSummary(parsed);
@@ -297,7 +377,10 @@ export default function ChatPage() {
           }
           // The card renders the data; don't also show the raw JSON in the bubble.
           if (handled) assistantText = assistantText.replace(blockMatch[0], "").trim();
-        } catch {}
+        } catch {
+          // Not one of the structured cards - leave the block in the text and render it
+          // normally. A malformed card must never break the whole message.
+        }
       }
 
       setMessages([...next, { role: "assistant", content: assistantText }]);
@@ -316,7 +399,33 @@ export default function ChatPage() {
     }
   }
 
+  function changeDeliveryAddress(loc: PickedLocation) {
+    setPendingSummary((prev) =>
+      prev
+        ? {
+            ...prev,
+            summary: { ...prev.summary, deliveryAddress: loc.label },
+            draft: { ...prev.draft, deliveryAddress: loc.label },
+          }
+        : prev,
+    );
+    setDeliveryPickerOpen(false);
+  }
+
   async function confirmOrder() {
+    // The card stays on screen for the whole round trip (pendingSummary is only cleared
+    // after the await), so without this guard a second click posts a second order - another
+    // charge and another stock decrement. The checkout page already gates itself this way.
+    if (!pendingSummary || confirming) return;
+    setConfirming(true);
+    try {
+      await postConfirmedOrder();
+    } finally {
+      setConfirming(false);
+    }
+  }
+
+  async function postConfirmedOrder() {
     if (!pendingSummary) return;
     const draft = { ...pendingSummary.draft, confirm: true };
     const res = await apiFetch(`/orders`, {
@@ -325,17 +434,43 @@ export default function ChatPage() {
     });
     const body = await res.json();
     setPendingSummary(null);
-    // POST /orders answers {confirmed: true, order: {...}} on success.
-    const order = body.order ?? body;
-    const tracking = order?.delivery?.trackingUrl
-      ? `\nTrack your delivery: [tracking link](${order.delivery.trackingUrl})`
-      : "";
+    if (!res.ok) {
+      setMessages((prev) => [...prev, { role: "assistant", content: `Error: ${body.message}` }]);
+      return;
+    }
+    if (body.requiresPayment) {
+      // Story 3.4: the order exists but is still 'pending' — it holds the portions and nothing
+      // has been charged. There is no `order` object in this reply, so announcing "confirmed"
+      // here also produced a /orders/undefined link. Hand the buyer the PaymentElement instead;
+      // the payment_intent.succeeded webhook is what flips the order to confirmed.
+      setPendingPayment({
+        orderId: body.orderId,
+        clientSecret: body.payment.clientSecret,
+        publishableKey: body.payment.publishableKey,
+        totalCents: pendingSummary.summary.totalCents,
+      });
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          content:
+            "Your portions are reserved. Enter your card below to complete the order — " +
+            "nothing is charged until you pay.",
+        },
+      ]);
+      return;
+    }
+    // POST /orders answers {confirmed: true, order: {...}} on success; the order card (below)
+    // renders the id as a link and, once the kitchen marks it ready, the tracking link too.
+    const order = body.order;
+    setConfirmedOrder({
+      id: order.id,
+      readySlot: order.readySlot,
+      trackingUrl: order.deliveryJob?.trackingUrl ?? null,
+    });
     setMessages((prev) => [
       ...prev,
-      {
-        role: "assistant",
-        content: res.ok ? `Order placed! ID: ${order.id}${tracking}` : `Error: ${body.message}`,
-      },
+      { role: "assistant", content: "Order confirmed! 🎉 Here are the details:" },
     ]);
   }
 
@@ -437,7 +572,10 @@ export default function ChatPage() {
       style={{
         display: "flex",
         flexDirection: "column",
-        minHeight: "100dvh",
+        // The fixed global header + its 78px spacer sit above this page, so "100dvh" alone
+        // now overshoots the viewport by that much — height (not minHeight) caps it so the
+        // message pane's flex:1/overflow-y:auto scrolls internally instead of the whole page.
+        height: "calc(100dvh - 78px)",
         maxWidth: 760,
         margin: "0 auto",
         padding: "14px 16px 0",
@@ -446,18 +584,32 @@ export default function ChatPage() {
     >
       <div className="hero-glow" aria-hidden="true" style={{ opacity: 0.6 }} />
 
-      <header className="island-nav" style={{ maxWidth: 480, margin: "0 auto", width: "100%" }}>
-        <Link href="/" style={{ fontWeight: 700, fontSize: 16, letterSpacing: "-0.02em" }}>
-          Nanas&rsquo; Kitchens
-        </Link>
+      <LocationPickerModal
+        open={locationPickerOpen}
+        onClose={location ? () => setLocationPickerOpen(false) : undefined}
+        onConfirm={confirmLocation}
+      />
+
+      {/* Site nav + sign-out live in the global Header now — just the chat-specific
+          location indicator stays here. */}
+      <div style={{ display: "flex", justifyContent: "center", width: "100%" }}>
         <button
-          onClick={signOut}
-          className="btn btn-ghost"
-          style={{ padding: "7px 16px", fontSize: 13.5 }}
+          type="button"
+          onClick={() => setLocationPickerOpen(true)}
+          className="chip"
+          style={{
+            fontSize: 12.5,
+            padding: "5px 12px",
+            maxWidth: 260,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+          title={location?.label ?? "Konum seç"}
         >
-          Sign out
+          📍 {location ? location.label.split(",")[0] : "Konum seç"}
         </button>
-      </header>
+      </div>
 
       <div role="log" aria-live="polite" style={{ flex: 1, overflowY: "auto", padding: "24px 2px" }}>
         {messages.length === 0 && (
@@ -530,6 +682,142 @@ export default function ChatPage() {
               <span className="typing-dot" />
               <span className="typing-dot" />
             </div>
+          </div>
+        )}
+
+        {/* Kitchen list card: a photo grid instead of a numbered text list */}
+        {pendingKitchens && (
+          <div className="fade-up shell" style={{ margin: "14px 0" }}>
+            <div className="shell-core" style={{ padding: "18px 20px" }}>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))",
+                  gap: 12,
+                }}
+              >
+                {pendingKitchens.items.map((k) => {
+                  const soldOut = k.portionsLeftToday === 0;
+                  return (
+                    <button
+                      key={k.id}
+                      type="button"
+                      onClick={() => send(`Show me the menu for ${k.name}`)}
+                      disabled={soldOut}
+                      style={{
+                        display: "flex",
+                        gap: 10,
+                        textAlign: "left",
+                        border: "1px solid var(--line)",
+                        borderRadius: 14,
+                        padding: 10,
+                        background: "var(--surface)",
+                        cursor: soldOut ? "default" : "pointer",
+                        opacity: soldOut ? 0.55 : 1,
+                      }}
+                    >
+                      {k.photo ? (
+                        <img
+                          src={k.photo}
+                          alt={k.name}
+                          style={{ width: 68, height: 68, borderRadius: 12, objectFit: "cover", flexShrink: 0 }}
+                        />
+                      ) : (
+                        <div
+                          style={{
+                            width: 68,
+                            height: 68,
+                            borderRadius: 12,
+                            background: "var(--surface-2)",
+                            flexShrink: 0,
+                          }}
+                        />
+                      )}
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
+                          <div style={{ fontWeight: 600, fontSize: 14.5 }}>{k.name}</div>
+                          {k.ratingAvg != null && (
+                            <span style={{ fontSize: 12.5, color: "var(--text-2)", whiteSpace: "nowrap" }}>
+                              &#9733; {k.ratingAvg.toFixed(1)}
+                              {k.ratingCount != null && ` (${k.ratingCount})`}
+                            </span>
+                          )}
+                        </div>
+                        <div style={{ fontSize: 12.5, color: "var(--text-2)", marginTop: 2 }}>
+                          {k.cuisineTag[0]?.toUpperCase() + k.cuisineTag.slice(1)} &middot; {k.distanceMiles} mi
+                          &middot; {soldOut ? "Sold out today" : `${k.portionsLeftToday} left`}
+                        </div>
+                        {k.description && (
+                          <div
+                            style={{
+                              fontSize: 12.5,
+                              color: "var(--text-3)",
+                              marginTop: 4,
+                              lineHeight: 1.4,
+                            }}
+                          >
+                            {k.description}
+                          </div>
+                        )}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Order confirmed card: links straight to the order detail page instead of a raw id */}
+        {confirmedOrder && (
+          <div className="fade-up shell" style={{ margin: "14px 0" }}>
+            <div className="shell-core" style={{ padding: 20, textAlign: "center" }}>
+              <div style={{ fontSize: 32 }}>🎉</div>
+              <h2 style={{ margin: "6px 0 4px", fontSize: 17, fontWeight: 700 }}>Order confirmed!</h2>
+              {confirmedOrder.readySlot && (
+                <p style={{ margin: "0 0 14px", color: "var(--text-2)", fontSize: 14 }}>
+                  Ready {fmtSlot(confirmedOrder.readySlot)}
+                </p>
+              )}
+              <div style={{ display: "flex", gap: 10, justifyContent: "center", flexWrap: "wrap" }}>
+                <Link href={`/orders/${confirmedOrder.id}`} className="btn btn-primary" style={{ padding: "10px 22px" }}>
+                  View order
+                </Link>
+                {confirmedOrder.trackingUrl && (
+                  <a
+                    href={confirmedOrder.trackingUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="btn-ghost"
+                    style={{
+                      padding: "9px 18px",
+                      borderRadius: 999,
+                      display: "inline-flex",
+                      alignItems: "center",
+                      textDecoration: "none",
+                    }}
+                  >
+                    Track delivery
+                  </a>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setConfirmedOrder(null)}
+                  className="btn-ghost"
+                  style={{ padding: "9px 18px" }}
+                >
+                  Dismiss
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Card payment for a placed-but-unpaid order (real Stripe provider only). Paying
+            redirects to /orders/{id}; the order stays pending until the webhook lands. */}
+        {pendingPayment && (
+          <div className="fade-up" style={{ margin: "14px 0" }}>
+            <PaymentStep payment={pendingPayment} totalCents={pendingPayment.totalCents} />
           </div>
         )}
 
@@ -699,20 +987,64 @@ export default function ChatPage() {
             </p>
             {pendingSummary.summary.deliveryAddress && (
               <>
-                <p style={{ margin: "8px 0 0", fontSize: 14.5 }}>
-                  <strong>Deliver to:</strong> {pendingSummary.summary.deliveryAddress}
-                </p>
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "baseline",
+                    gap: 10,
+                    marginTop: 8,
+                  }}
+                >
+                  <p style={{ margin: 0, fontSize: 14.5 }}>
+                    <strong>Deliver to:</strong> {pendingSummary.summary.deliveryAddress}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setDeliveryPickerOpen(true)}
+                    style={{
+                      fontSize: 13,
+                      fontWeight: 700,
+                      padding: "7px 16px",
+                      flexShrink: 0,
+                      border: "1.5px solid var(--accent)",
+                      background: "var(--accent-soft)",
+                      color: "var(--accent-strong)",
+                      borderRadius: 999,
+                      cursor: "pointer",
+                    }}
+                  >
+                    📍 Change address
+                  </button>
+                </div>
                 <AddressMap address={pendingSummary.summary.deliveryAddress} />
+                <LocationPickerModal
+                  open={deliveryPickerOpen}
+                  onClose={() => setDeliveryPickerOpen(false)}
+                  onConfirm={changeDeliveryAddress}
+                  restrictToUS={false}
+                />
               </>
             )}
             <p style={{ margin: "16px 0 0", fontSize: 15, fontWeight: 600 }}>
               Do you confirm this order?
             </p>
             <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
-              <button onClick={confirmOrder} className="btn btn-primary" style={{ padding: "10px 22px" }}>
-                Confirm order
+              <button
+                onClick={confirmOrder}
+                disabled={confirming}
+                aria-busy={confirming}
+                className="btn btn-primary"
+                style={{ padding: "10px 22px" }}
+              >
+                {confirming ? "Placing order…" : "Confirm order"}
               </button>
-              <button onClick={() => setPendingSummary(null)} className="btn btn-ghost" style={{ padding: "9px 18px" }}>
+              <button
+                onClick={() => setPendingSummary(null)}
+                disabled={confirming}
+                className="btn btn-ghost"
+                style={{ padding: "9px 18px" }}
+              >
                 Cancel
               </button>
             </div>

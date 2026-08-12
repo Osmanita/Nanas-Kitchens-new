@@ -11,17 +11,24 @@ import com.nanaskitchens.api.kitchens.dto.MenuDayResponse;
 import com.nanaskitchens.api.orders.dto.CreateOrderRequest;
 import com.nanaskitchens.api.orders.dto.OrderDetailResponse;
 import com.nanaskitchens.api.orders.dto.OrderSummary;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeParseException;
+import java.time.temporal.ChronoUnit;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
@@ -39,7 +46,16 @@ public class OrdersService {
     private static final int DELIVERY_FEE_CENTS = 399;
     private static final double DELIVERY_RADIUS_MILES = 10;
     private static final double METERS_PER_MILE = 1609.344;
-    private static final Set<String> FINAL_STATUSES = Set.of("completed", "cancelled");
+    // Cancelling releases the portions and refunds in full, so it may only run while nothing
+    // has been spent on the order yet: 'pending' (the buyer's payment sheet is still open) and
+    // 'confirmed' (the seller hasn't accepted). From 'accepted' on the kitchen is cooking —
+    // restoring the portions would put food that no longer exists back on sale, and the buyer
+    // would be refunded for it. 'declined' is excluded for the opposite reason: decline()
+    // already restores and refunds, so a second pass would do both twice.
+    private static final Set<String> CANCELLABLE = Set.of("pending", "confirmed");
+    // Orders that ended without the buyer getting food. An idempotency replay must not hand
+    // one of these back as a confirmed order (see place()).
+    private static final Set<String> DEAD_STATUSES = Set.of("cancelled", "declined");
 
     /** Story 4.1 seller transitions: current status -> allowed next statuses. */
     private static final Map<String, Set<String>> SELLER_TRANSITIONS = Map.of(
@@ -162,6 +178,40 @@ public class OrdersService {
             return Map.of("confirmed", false, "summary", summary); // FR15: summary first, no side effects
         }
 
+        // A fresh UUID for the idempotency key meant a double submit - two clicks, a retried
+        // request - looked like a brand new order to both us and Stripe: two orders, two
+        // charges, stock decremented twice. Deriving the key from the request makes the retry
+        // collide with the first attempt, so Stripe returns the original PaymentIntent and the
+        // UNIQUE constraint on Order.idempotencyKey refuses the second row.
+        //
+        // This check MUST come before the decrement below. Returning early after decrementing
+        // would commit the decrement without an order attached and quietly leak portions -
+        // which is exactly what happened the first time this was written.
+        String idempotencyKey = idempotencyKeyFor(buyerId, input);
+        Optional<String> alreadyPlaced = db
+                .sql("SELECT id FROM \"Order\" WHERE \"idempotencyKey\" = :key AND \"buyerId\" = :buyerId")
+                .param("key", idempotencyKey)
+                .param("buyerId", buyerId)
+                .query(String.class)
+                .optional();
+        if (alreadyPlaced.isPresent()) {
+            OrderDetailResponse existing = detail(buyerId, alreadyPlaced.get());
+            if ("pending".equals(existing.status())) {
+                // The first attempt is still waiting on the buyer's PaymentIntent. Sending a
+                // second one would double-charge, so tell the client to resume that order
+                // instead of quietly starting another.
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "PAYMENT_IN_PROGRESS");
+            }
+            if (!DEAD_STATUSES.contains(existing.status())) {
+                return Map.of("confirmed", true, "order", existing);
+            }
+            // The earlier attempt was cancelled or declined, so this is a buyer deliberately
+            // re-ordering, not a duplicate submit. Replaying it would hand back a dead order
+            // as "confirmed" and place nothing. Give the new order a key of its own - the
+            // dead one still holds the derived key, and that column is UNIQUE.
+            idempotencyKey = idempotencyKey + ":" + UUID.randomUUID();
+        }
+
         // Atomic: decrement + order in one transaction (Story 2.3 / architecture Workflow 1).
         // The PaymentIntent is created inside the same transaction on purpose: a provider
         // failure rolls everything back, which IS the compensating restore of Story 3.3 AC3.
@@ -169,7 +219,6 @@ public class OrdersService {
         for (CreateOrderRequest.Item item : input.items()) {
             inventory.decrement(item.menuItemId(), item.qty());
         }
-        String idempotencyKey = UUID.randomUUID().toString(); // doubles as the Stripe idempotency key
         PaymentProvider.Intent intent = payments.createIntent(orderId, totalCents, idempotencyKey);
         // mock settles instantly → confirmed (pre-3.4 behaviour); stripe stays pending until
         // the webhook lands (detail() already withholds the pickup address while pending).
@@ -177,10 +226,12 @@ public class OrdersService {
         db.sql("""
                 INSERT INTO "Order"
                   (id, "buyerId", "kitchenId", "menuDayId", status, "readySlot", fulfillment,
-                   "totalCents", "commissionCents", "deliveryFeeCents", "tipCents", "paymentIntentId", "idempotencyKey")
+                   "totalCents", "commissionCents", "deliveryFeeCents", "tipCents", "paymentIntentId",
+                   "idempotencyKey", "deliveryAddressEncrypted")
                 VALUES
                   (:id, :buyerId, :kitchenId, :menuDayId, :status, :readySlot, :fulfillment,
-                   :totalCents, :commissionCents, :deliveryFeeCents, :tipCents, :paymentIntentId, :idempotencyKey)
+                   :totalCents, :commissionCents, :deliveryFeeCents, :tipCents, :paymentIntentId,
+                   :idempotencyKey, :deliveryAddressEncrypted)
                 """)
                 .param("id", orderId)
                 .param("buyerId", buyerId)
@@ -195,6 +246,11 @@ public class OrdersService {
                 .param("tipCents", courierTipCents)
                 .param("paymentIntentId", intent.id())
                 .param("idempotencyKey", idempotencyKey)
+                // NFR5: the drop-off address is what the courier is dispatched to, so it has to
+                // survive the request. Stored encrypted like Kitchen.addressEncrypted; encrypt()
+                // dereferences its argument, so pickup orders store null rather than encrypting it.
+                .param("deliveryAddressEncrypted",
+                        isDelivery ? addressCrypto.encrypt(deliveryAddress) : null)
                 .update();
         for (CreateOrderRequest.Item item : input.items()) {
             db.sql("""
@@ -239,6 +295,38 @@ public class OrdersService {
         return result;
     }
 
+    /**
+     * Stable fingerprint of "this exact basket, from this buyer, right now". Two submissions of
+     * the same order collide and are treated as one; changing anything that moves the price or
+     * the fulfilment produces a different key, so an edited order still goes through.
+     *
+     * <p>The minute bucket is what bounds it. Double clicks and network retries land inside the
+     * same minute and dedupe; a buyer who genuinely wants the same basket again a minute later
+     * is not blocked, which a purely content-derived key would have made impossible. The cost
+     * is a narrow seam: a double submit straddling a minute boundary still gets through.
+     */
+    private String idempotencyKeyFor(String buyerId, CreateOrderRequest input) {
+        StringBuilder canonical = new StringBuilder()
+                .append(buyerId).append('|')
+                .append(input.kitchenId()).append('|')
+                .append(input.menuDayId()).append('|')
+                .append(input.readySlot()).append('|')
+                .append(input.fulfillment()).append('|')
+                .append(input.courierTipCents()).append('|')
+                .append(input.deliveryAddress() == null ? "" : input.deliveryAddress().trim()).append('|')
+                .append(Instant.now().truncatedTo(ChronoUnit.MINUTES)).append('|');
+        input.items().stream()
+                .sorted(Comparator.comparing(CreateOrderRequest.Item::menuItemId))
+                .forEach(it -> canonical.append(it.menuItemId()).append('x').append(it.qty()).append(','));
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256")
+                    .digest(canonical.toString().getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(digest);
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 is required for order idempotency keys", e);
+        }
+    }
+
     /** FR22 — the seller learns about a (paid) order the moment it lands. */
     public void notifySellerNewOrder(String orderId, String kitchenId) {
         record Row(String sellerId, String fulfillment, String readySlot) {
@@ -270,6 +358,14 @@ public class OrdersService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     "ADDRESS_NOT_FOUND: could not locate this address on the map. Ask the buyer "
                             + "for a clearer address including the town/city name.");
+        }
+        // Cheap, clearer rejection before the distance math — every kitchen is US-based, so a
+        // non-US drop-off would fail the radius check anyway, but with a confusing "X thousand
+        // miles away" message instead of telling the buyer plainly why it can't work.
+        if (point.countryCode() != null && !"us".equalsIgnoreCase(point.countryCode())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "ADDRESS_OUTSIDE_US: delivery is only available within the United States right now. "
+                            + "Offer pickup, or ask for a US delivery address.");
         }
         Double meters = db.sql("""
                 SELECT ST_Distance(geo, ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geography)
@@ -486,15 +582,24 @@ public class OrdersService {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN);
         }
         return db.sql("""
-                SELECT o.id, o.status, o."readySlot", o.fulfillment, o."totalCents", o."createdAt",
+                SELECT o.id, o.status, o."readySlot", o.fulfillment, o."totalCents",
+                       o."deliveryFeeCents", o."tipCents", o."createdAt",
                        dj.provider AS delivery_provider, dj.status AS delivery_status,
                        dj."trackingUrl" AS delivery_tracking_url,
+                       u.email AS buyer_email, u.phone AS buyer_phone,
                        (SELECT string_agg(d.name || ' x' || oi.qty, ', ' ORDER BY d.name)
                         FROM "OrderItem" oi
                         JOIN "MenuItem" mi ON mi.id = oi."menuItemId"
                         JOIN "Dish" d ON d.id = mi."dishId"
-                        WHERE oi."orderId" = o.id) AS items_summary
+                        WHERE oi."orderId" = o.id) AS items_summary,
+                       (SELECT json_agg(json_build_object('name', d.name, 'qty', oi.qty, 'photo', d.photo)
+                                         ORDER BY d.name)
+                        FROM "OrderItem" oi
+                        JOIN "MenuItem" mi ON mi.id = oi."menuItemId"
+                        JOIN "Dish" d ON d.id = mi."dishId"
+                        WHERE oi."orderId" = o.id) AS items_json
                 FROM "Order" o
+                JOIN "User" u ON u.id = o."buyerId"
                 LEFT JOIN "DeliveryJob" dj ON dj."orderId" = o.id
                 WHERE o."kitchenId" = :kitchenId
                   AND (:status::text IS NULL OR o.status::text = :status)
@@ -510,8 +615,13 @@ public class OrdersService {
                     row.put("readySlot", rs.getTimestamp("readySlot").toLocalDateTime());
                     row.put("fulfillment", rs.getString("fulfillment"));
                     row.put("totalCents", rs.getInt("totalCents"));
+                    row.put("deliveryFeeCents", rs.getInt("deliveryFeeCents"));
+                    row.put("tipCents", rs.getInt("tipCents"));
                     row.put("createdAt", rs.getTimestamp("createdAt").toLocalDateTime());
                     row.put("itemsSummary", rs.getString("items_summary"));
+                    row.put("items", parseItemsJson(rs.getString("items_json")));
+                    row.put("buyerEmail", rs.getString("buyer_email"));
+                    row.put("buyerPhone", rs.getString("buyer_phone"));
                     // Story 4.1 board — delivery-partner status chip (null for pickup / pre-ready)
                     row.put("deliveryProvider", rs.getString("delivery_provider"));
                     row.put("deliveryStatus", rs.getString("delivery_status"));
@@ -519,6 +629,12 @@ public class OrdersService {
                     return row;
                 })
                 .list();
+    }
+
+    /** items_json is a Postgres json_agg(...) array, null when an order somehow has no lines. */
+    private List<Map<String, Object>> parseItemsJson(String itemsJson) {
+        if (itemsJson == null) return List.of();
+        return jsonMapper.readValue(itemsJson, List.class);
     }
 
     /** Buyer order history — mirrors listForKitchen but scoped to the buyer's own orders. */
@@ -572,7 +688,7 @@ public class OrdersService {
         if (!buyerId.equals(order.get("buyerId"))) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN);
         }
-        if (FINAL_STATUSES.contains((String) order.get("status"))) {
+        if (!CANCELLABLE.contains((String) order.get("status"))) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "NOT_CANCELLABLE");
         }
         String previousStatus = (String) order.get("status");

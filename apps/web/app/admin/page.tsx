@@ -5,7 +5,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
-import { apiFetch, getSession, Session } from "../../lib/api";
+import { apiFetch, ensureSession, Session } from "../../lib/api";
 
 interface Inspector {
   id: string;
@@ -49,9 +49,10 @@ export default function AdminPage() {
   const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
-    const s = getSession();
-    setSession(s);
-    if (!s) router.replace("/login?next=/admin");
+    ensureSession().then((s) => {
+      setSession(s);
+      if (!s) router.replace("/login?next=/admin");
+    });
   }, [router]);
 
   const loadAll = useCallback(async () => {

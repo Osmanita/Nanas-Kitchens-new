@@ -21,6 +21,8 @@
     <java.version>21</java.version>
     <spring-ai.version>2.0.0</spring-ai.version>
     <jjwt.version>0.13.0</jjwt.version>
+    <stripe.version>29.5.0</stripe.version>
+    <testcontainers.version>1.20.4</testcontainers.version>
   </properties>
 
   <dependencyManagement>
@@ -76,18 +78,12 @@
       <artifactId>spring-ai-starter-model-google-genai</artifactId>
     </dependency>
 
-    <!-- Story 3.4: Stripe payments (test mode in dev; activates when STRIPE_SECRET_KEY is set). -->
+    <!-- Story 3.4: Stripe payments — PaymentIntent + signature-verified webhooks
+         (test mode in dev; activates when STRIPE_SECRET_KEY is set). -->
     <dependency>
       <groupId>com.stripe</groupId>
       <artifactId>stripe-java</artifactId>
-      <version>29.5.0</version>
-    </dependency>
-
-    <!-- Story 3.4: Stripe PaymentIntent + signature-verified webhooks. -->
-    <dependency>
-      <groupId>com.stripe</groupId>
-      <artifactId>stripe-java</artifactId>
-      <version>29.0.0</version>
+      <version>${stripe.version}</version>
     </dependency>
 
     <!-- Required at runtime by Argon2PasswordEncoder (spring-security-crypto does not bundle it). -->
@@ -130,6 +126,22 @@
     <dependency>
       <groupId>org.springframework.security</groupId>
       <artifactId>spring-security-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+
+    <!-- Integration tests: a real PostGIS-flavored Postgres in Docker, not H2/mocks —
+         the app's business logic lives in raw SQL (ST_DWithin, json_agg, ...) that an
+         in-memory DB can't fake. -->
+    <dependency>
+      <groupId>org.testcontainers</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <version>${testcontainers.version}</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.testcontainers</groupId>
+      <artifactId>postgresql</artifactId>
+      <version>${testcontainers.version}</version>
       <scope>test</scope>
     </dependency>
   </dependencies>
