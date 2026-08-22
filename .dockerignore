@@ -1,0 +1,39 @@
+# Build context for EVERY image in this repo is the repo root, so this one file
+# covers all of them. Keep it tight: everything not excluded here is uploaded to the
+# daemon on every build.
+
+# Never ship secrets. .env is gitignored too, but a build context is not a git clone.
+.env
+.env.*
+!.env.example
+
+# Installed/derived — the images build these themselves.
+**/node_modules
+**/dist
+**/.next
+**/target
+**/coverage
+**/*.tsbuildinfo
+apps/api-java/.mvn/wrapper/maven-wrapper.jar
+
+# Locally uploaded photos (LocalPhotoStorage). Ephemeral anyway — see E4 in
+# yapilacaklar-nanas-kitchens.txt: this needs to become S3 before ECS.
+apps/api-java/uploads
+uploads
+
+# Kotlin Multiplatform app — no image builds from it, and Gradle caches are huge.
+apps/mobile
+
+# VCS / editor / OS noise
+.git
+.github
+.gitignore
+.idea
+.vscode
+**/.DS_Store
+**/Thumbs.db
+
+# Docs and scratch
+docs
+*.md
+!README.md

@@ -1,0 +1,63 @@
+# syntax=docker/dockerfile:1
+#
+# One-shot schema migration job. Run it as an ECS RunTask against RDS BEFORE rolling
+# the services, not as a long-running service — it exits when done.
+#
+# Build from the REPO ROOT, not from this directory:
+#   docker build -f apps/api/Dockerfile.migrate -t nanas/migrate .
+#
+# WHY THIS EXISTS (E2): the Java API does not own the schema. There is no Flyway or
+# Liquibase in apps/api-java/pom.xml and application.yml sets `ddl-auto: none`, so
+# Hibernate creates nothing. The only thing that can build the schema in RDS is
+# `prisma migrate deploy` from apps/api/prisma/migrations. That stays true even after
+# the NestJS service itself is switched off.
+#
+# Needs DATABASE_URL. The PostGIS extension is declared in schema.prisma
+# (extensions = [postgis]) and created by migration 0001_postgis_geo, so the role in
+# DATABASE_URL must be allowed to CREATE EXTENSION on first run — on RDS that means
+# rds_superuser, or pre-creating the extension by hand once.
+
+# This image deliberately does NOT do a pnpm workspace install.
+#
+# The first version did (`pnpm install --filter api...`, without --prod, because the
+# prisma CLI is a devDependency) and weighed 1.2 GB: it dragged in the whole of
+# apps/api's dev toolchain — nest CLI, jest, ts-node, typescript — none of which has
+# anything to do with applying a migration. For an image pulled on every deploy that is
+# pure waste.
+#
+# The CLI is installed on its own instead. The version is not hardcoded: it is read out
+# of pnpm-lock.yaml at build time, so the lockfile stays the single source of truth and
+# this image cannot silently drift from what the app is built against.
+FROM node:22-alpine
+
+# Prisma's query/schema engines are dynamically linked against OpenSSL; on musl it
+# picks the linux-musl-openssl-3.0.x build, which needs openssl present.
+RUN apk add --no-cache openssl ca-certificates
+
+WORKDIR /job
+
+# Only the lockfile, only to read a version out of it — it is removed in the same layer
+# so it does not ship.
+COPY pnpm-lock.yaml ./
+RUN PRISMA_VERSION="$(awk '/^  apps\/api:/{f=1} f && /^      prisma:$/{getline; getline; sub(/\(.*/,"",$2); print $2; exit}' pnpm-lock.yaml)" \
+ && test -n "$PRISMA_VERSION" \
+ && echo "prisma CLI pinned from pnpm-lock.yaml: $PRISMA_VERSION" \
+ && npm install -g "prisma@$PRISMA_VERSION" \
+ && npm cache clean --force \
+ && rm pnpm-lock.yaml
+
+# Schema + migrations only. No application source, so an unrelated code change does not
+# invalidate this layer or this image's identity. `migrate deploy` never generates a
+# client, so @prisma/client is not needed here.
+COPY apps/api/prisma/ ./prisma/
+
+# No update check / telemetry ping at runtime: this job runs in a private subnet with
+# no egress, and a blocked outbound call is a slow start at best.
+ENV CHECKPOINT_DISABLE=1
+ENV PRISMA_HIDE_UPDATE_MESSAGE=1
+
+USER node
+
+# `migrate deploy` applies pending migrations and never prompts, never resets, never
+# generates. It is the only migrate subcommand safe to point at production.
+CMD ["prisma", "migrate", "deploy"]
