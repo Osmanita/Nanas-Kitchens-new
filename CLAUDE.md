@@ -43,7 +43,11 @@ Demo pazaryeri artık **Powell, Ohio (43065)** merkezli (bkz. Seed verisi).
 - **`apps/api`** — eski NestJS API (:3001). Prisma şemasının/migration'ların sahibi;
   menu CRUD ve kalan hikayeler taşınana kadar duruyor. Seed buradan çalışır.
 - **`apps/mcp-server`** — MCP sunucusu (:3002).
-- PostGIS + Redis: `docker compose up -d`.
+- PostGIS + Redis: `docker compose up -d`. (compose SADECE bu ikisini kaldırır, uygulamaları
+  değil.)
+- Dört uygulamanın da kendi `Dockerfile`'ı var, artı `apps/api/Dockerfile.migrate` (tek
+  seferlik `prisma migrate deploy` job'ı). **Hepsinin build context'i repo köküdür.**
+  Ayrıntı ve tuzaklar için "7. tur"a bak.
 
 ## Çalıştırma (Windows dahil)
 
@@ -93,15 +97,13 @@ durdur (mvnw + fork iki java process açar).
   4.85+ ile gözlemlendi) — `apps/api-java/src/test/java/.../support` altındaki entegrasyon
   testleri bu ortamda çalıştırılamadı, kod hazır ama doğrulanamadı. Normal bir Docker
   kurulumunda çalışması beklenir.
-- ⚠️ **2026-08-12: Docker'a hiç erişilemiyor, sebebi Testcontainers değil.** `docker info`
-  bile `permission denied ... npipe:////./pipe/dockerDesktopLinuxEngine` veriyor ve
-  `docker compose up -d` çalışmıyor. Sebep: **`oso13` kullanıcısı `docker-users` yerel
-  grubunda değil** (grupta sadece `cakma` var). Docker Desktop çalışıyor ve pipe'lar duruyor,
-  sorun tamamen izin. Düzeltmesi admin PowerShell ister ve **oturum kapat/aç şart** — grup
-  üyeliği giriş token'ına yazılıyor, Docker Desktop'ı yeniden başlatmak yetmez:
-  `Add-LocalGroupMember -Group "docker-users" -Member "oso13"`
-  Bu düzelene kadar Java entegrasyon testleri yerelde çalıştırılamaz; CI'da çalışıyorlar
-  (aşağıya bak), o yüzden pratikte tıkanmıyorsun ama "yerelde yeşil gördüm" diyemezsin.
+- ~~2026-08-12: Docker'a hiç erişilemiyor (`oso13` `docker-users` grubunda değil)~~ —
+  **2026-08-22'de çözüldü, Docker çalışıyor** (29.6.2, `docker compose up -d` dahil). Beş
+  imaj da bu makinede build edildi; "7. tur"a bak. Aynı belirtiyi tekrar görürsen
+  (`permission denied ... npipe:////./pipe/dockerDesktopLinuxEngine`) çaresi admin
+  PowerShell'de `Add-LocalGroupMember -Group "docker-users" -Member "oso13"` ve **oturum
+  kapat/aç** — grup üyeliği giriş token'ına yazılıyor, Docker Desktop'ı yeniden başlatmak
+  yetmez.
 
 ## .env (gitignore'da — repoda YOK, sadece .env.example var)
 
@@ -526,8 +528,9 @@ Merge öncesi tam bir denetim yapıldı; not edilmeye değer çıktıları:
   `JWT_REFRESH_SECRET`, `ADDRESS_ENC_KEY` — üçü de repoda yayınlanmış literal'ler. Dağıtımdan
   önce döndür. `ADDRESS_ENC_KEY`'i döndürmek **mevcut şifreli adresleri kullanılamaz hale
   getirir**, yani önce onlara ne olacağına karar ver.
-- **`DELIVERY_WEBHOOK_SECRET` artık zorunlu ama yerel `.env`'de yok** → Java API bir sonraki
-  açılışta `Could not resolve placeholder` ile patlar. Yukarıdaki rotasyonla birlikte üret.
+- ~~`DELIVERY_WEBHOOK_SECRET` artık zorunlu ama yerel `.env`'de yok~~ — **2026-08-22'de
+  kontrol edildi: artık var**, hem `.env` hem `apps/api/.env` içinde. Bu uyarı geçersiz.
+  (Değer hâlâ repoda yayınlanmış olanın kendisi, yani rotasyon borcu duruyor.)
 - **`merge/nanas-chatbot` bu merge'den sonra 5 dosya / 7 hunk çakışacak** (CLAUDE.md,
   SystemPrompt.java, CreateOrderRequest.java, chat/page.tsx, seller/kitchen/page.tsx).
   Sıradan bağımsız — ters sıra da test edildi, maliyet aynı. ⚠️ İçinde çakışma işaretinin
@@ -540,6 +543,74 @@ Merge öncesi tam bir denetim yapıldı; not edilmeye değer çıktıları:
   `renderRich`'ini birlikte tut.
 - `AddressCryptoTest.java` eski adres anahtarı literal'ini fixture olarak sabit tutuyor.
   Kendi başına zararsız ama gerçek anahtar malzemesiyle karışmasın diye yeniden adlandır.
+
+### 7. tur — container'lama (2026-08-22)
+
+Repoda **hiç Dockerfile yoktu** — `docker-compose.yml` yalnızca db + redis kaldırıyordu,
+dört uygulamanın dördü de container'lanmamıştı. (Eski notlardaki "sadece `apps/api`
+container'lanmadı" yanlıştı.) Beş imaj yazıldı, build edildi ve **çalıştığı doğrulandı**:
+
+| imaj | boyut | doğrulama |
+| --- | --- | --- |
+| `nanas/web` | 343 MB | `GET /login` → 200 |
+| `nanas/mcp-server` | 310 MB | `/.well-known/oauth-authorization-server` → 200 |
+| `nanas/api-java` | 665 MB | Postgres'e karşı `/health` → `{"status":"ok","db":"up"}` |
+| `nanas/api` | 931 MB | aynı şekilde `/health` → `{"status":"ok","db":"up"}` |
+| `nanas/migrate` | 471 MB | boş DB'ye 14 migration, 24 tablo, postgis 3.4.3 |
+
+**Hepsinin build context'i repo köküdür**, kendi dizinleri değil:
+`docker build -f apps/web/Dockerfile --build-arg NEXT_PUBLIC_API_URL=... -t nanas/web .`
+
+Env'siz çalıştırıldıklarında **doğru sebeple** düşüyorlar — bu bir sağlık işareti:
+`api-java` → `Could not resolve placeholder 'JWT_SECRET'` (2. turdaki fail-closed davranış
+hâlâ yerinde), `api` → Prisma `P1001` (yani üretilen client gerçek, stub değil).
+
+**Build sırasında iki gerçek hata çıktı; ikisi de kod incelemeyle bulunamazdı:**
+
+- **`tsconfig.base.json` hiçbir imaja kopyalanmıyordu.** Belirti: `mcp-server`'ın `tsc`'si
+  konteynerde **JS heap OOM** ile öldü — 3 dosyalık, 2000 satırlık bir pakette.
+  `apps/{api,mcp-server}` ve `packages/core` tsconfig'lerinin üçü de ona `extends` ediyor;
+  dosya yokken tsc **gürültülü biçimde patlamıyor**, sessizce derleyici varsayılanlarına
+  dönüyor, `skipLibCheck`'i kaybediyor ve `node_modules` altındaki her `.d.ts`'i
+  denetlemeye başlıyor. Küçük bir pakette OOM görürsen önce bunu kontrol et.
+- **`mvnw` çalışma ağacında CRLF'ti** → `/bin/sh: 1: ./mvnw: not found`, exit 127, dosya
+  tam orada dururken. Git'teki hali doğru (LF + 100755) ama `core.autocrlf=true` ve
+  `.gitattributes` yalnızca `* text=auto` diyordu; Windows checkout'u CRLF veriyor.
+  **Docker'ın build context'i git değil ÇALIŞMA AĞACIDIR**, dolayısıyla konteynere
+  `#!/bin/sh
+` gidiyor ve çekirdek `/bin/sh
+` adında bir yorumlayıcı arıyor.
+  ⚠️ **CI bunu asla göremez** (Linux checkout LF'tir) — yeşil CI bu sınıf hatayı elemiyor.
+  `.gitattributes`'a `mvnw`/`gradlew`/`*.sh` için `eol=lf` eklendi ve dosya yeniden
+  checkout edildi. **`.gitattributes`'ı değiştirmek diskteki dosyaları kendiliğinden
+  düzeltmez**, etkilenen yolları yeniden materyalize etmek şart.
+
+**Bilerek verilmiş kararlar:**
+
+- `next.config.ts`'e `output: "standalone"` eklendi ama `NEXT_OUTPUT_STANDALONE=1`
+  arkasına alındı; yalnızca Dockerfile set ediyor. Sebep: standalone çıktısı pnpm'in
+  symlink ağacını yeniden kurmayı gerektiriyor ve Windows'ta symlink oluşturmak Developer
+  Mode ister — koşulsuz bırakılınca `pnpm build` **derlemeyi bitirdikten sonra** `EPERM`
+  ile patlıyor. Linux'ta (Docker/CI) böyle bir kısıt yok.
+- `NEXT_PUBLIC_API_URL` **build zamanında bundle'a gömülür** (`lib/api.ts`). ECS task
+  definition'a runtime env olarak vermek hiçbir işe yaramaz; `--build-arg` şart. Doğrulandı:
+  verilen değer `.next/static` içinde 16 yerde duruyor. Domain alınınca imaj **yeniden
+  build edilmek zorunda**, yeniden yönlendirilemez.
+- `apps/api` ve `migrate` Debian/Alpine seçimleri keyfi değil: `argon2` native bir addon ve
+  Prisma motorları libc'ye göre binary seçiyor.
+- `apps/api` imajı build stage'in tamamını taşıyor (devDependency'ler dahil). `--prod` ağacı
+  prisma CLI'ını düşürür ve üretilen client pnpm store'unun içinde yaşar. `pnpm deploy`
+  ile incelmesi ileriye bırakıldı.
+- `migrate` **1.2 GB'dan 471 MB'a indirildi**: pnpm workspace kurulumu tamamen kaldırıldı,
+  yerine tek başına prisma CLI kuruluyor. Sürüm **hardcode değil**, build sırasında
+  `pnpm-lock.yaml`'dan okunuyor (`test -n` ile boşsa build kasten patlıyor), yani lockfile
+  tek doğruluk kaynağı olarak kalıyor.
+
+**Hâlâ ECS'e engel** (tam liste masaüstündeki `yapilacaklar-nanas-kitchens.txt`, E1-E14):
+fotoğraflar yerel diske yazılıyor (`LocalPhotoStorage`, Fargate'te efemer — S3 şart);
+MCP OAuth store'u, portions SSE sink map'i ve mock kurye quote'ları in-memory (ikinci
+task'ta bozulurlar); `MenuRolloverJob` kilitsiz; **Redis kodda hiç kullanılmıyor**
+(ElastiCache'i açmadan önce gerçekten bağla); Nominatim'i ECS'ten çağırmak IP ban riski.
 
 ## İsim / domain brainstorm (2026-08-07)
 
