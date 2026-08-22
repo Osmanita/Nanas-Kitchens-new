@@ -1,2 +1,21 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# ...but never for scripts that a Linux kernel has to exec.
+#
+# `* text=auto` above hands these CRLF on a Windows checkout. Git's own copy stays LF
+# (mvnw is 100755 + LF in the index), so CI — which checks out on Linux — never sees a
+# problem. A Docker build does: its context is the WORKING TREE, so the container gets
+# `#!/bin/sh\r`, the kernel goes looking for an interpreter literally named "/bin/sh\r",
+# and the build dies with the very misleading `./mvnw: not found` (exit 127).
+#
+# After changing this file, re-materialise the affected paths so the working tree
+# actually picks the rule up — editing .gitattributes alone changes nothing on disk:
+#   git rm --cached -r . && git reset --hard        (whole tree)
+#   rm apps/api-java/mvnw && git checkout -- apps/api-java/mvnw   (just this one)
+mvnw text eol=lf
+gradlew text eol=lf
+*.sh text eol=lf
+
+# Binary-ish wrapper payloads: never touch them.
+*.jar binary
