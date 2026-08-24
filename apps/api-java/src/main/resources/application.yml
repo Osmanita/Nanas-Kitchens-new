@@ -21,6 +21,12 @@ spring:
     url: ${JDBC_DATABASE_URL:jdbc:postgresql://localhost:5432/culture_eats?stringtype=unspecified}
     username: ${DB_USER:culture}
     password: ${DB_PASSWORD:culture}
+  data:
+    redis:
+      # Same REDIS_URL the rest of the stack already had in .env and docker-compose. Carries
+      # the portions fan-out and the courier quotes, i.e. the two things that break the moment
+      # a second task exists. ElastiCache in the deployed setup.
+      url: ${REDIS_URL:redis://localhost:6379}
   jpa:
     # Prisma owns the schema/migrations during the transition — never let Hibernate touch it.
     hibernate:

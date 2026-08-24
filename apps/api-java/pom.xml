@@ -54,6 +54,13 @@
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-validation</artifactId>
     </dependency>
+    <!-- Redis was in .env and in docker-compose from the start, but no code ever touched it:
+         its only mention in the whole repo was a comment. It is what makes portion counts and
+         courier quotes survive a second task, so it is a real dependency now, not a plan. -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-data-redis-reactive</artifactId>
+    </dependency>
     <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-mail</artifactId>
@@ -126,6 +133,13 @@
     <dependency>
       <groupId>org.springframework.security</groupId>
       <artifactId>spring-security-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <!-- StepVerifier: the portions stream is a Flux, and asserting "this arrives, then that,
+         and nothing in between" on it by hand is where flaky tests come from. -->
+    <dependency>
+      <groupId>io.projectreactor</groupId>
+      <artifactId>reactor-test</artifactId>
       <scope>test</scope>
     </dependency>
 

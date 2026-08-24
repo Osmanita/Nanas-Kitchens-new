@@ -65,6 +65,14 @@ jobs:
         options: >-
           --health-cmd "pg_isready -h localhost -U culture -d nanas_test"
           --health-interval 5s --health-timeout 5s --health-retries 20
+      # The portions stream is Redis pub/sub now, so the Spring context needs a Redis to
+      # come up at all, and PortionsStreamRedisIntegrationTest asserts a message actually
+      # crosses between two instances through it.
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
