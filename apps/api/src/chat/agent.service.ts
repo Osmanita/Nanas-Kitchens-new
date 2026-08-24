@@ -8,7 +8,11 @@ import Anthropic from "@anthropic-ai/sdk";
 import { Response } from "express";
 import { SYSTEM_PROMPT } from "./system.prompt";
 
-const API_URL = process.env.API_URL ?? "http://localhost:3001";
+// The Java backend, not this service. Ordering no longer lives here at all, and the routes
+// this agent calls are wire-compatible on :8080 - pointing at :3001 would 404 on every order
+// tool. This whole chat path is superseded by the Spring AI agent in apps/api-java; it stays
+// as reference until the last stories move over.
+const API_URL = process.env.API_URL ?? "http://localhost:8080";
 const MODEL = "claude-opus-4-8";
 
 const TOOLS: Anthropic.Tool[] = [
