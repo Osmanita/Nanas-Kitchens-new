@@ -5,6 +5,10 @@
  * Run: pnpm seed   (from apps/api)
  * Login: buyer@demo.com / demo1234
  */
+// Must precede PrismaClient: this script is run directly (`pnpm seed`), not through the Nest
+// bootstrap, and PrismaClient reads DATABASE_URL at construction. Only the prisma CLI loads
+// .env by itself — a plain ts-node run does not.
+import "../src/env";
 import { PrismaClient } from "@prisma/client";
 import * as argon2 from "argon2";
 import { encryptAddress } from "@culture-eats/core";
@@ -231,8 +235,13 @@ async function main() {
         // The Dish catalogue belongs to the kitchen, not to the day. Creating it unconditionally
         // meant every new UTC day (when the MenuDay guard above lets us in) duplicated all of a
         // kitchen's dishes; after a week the seller's dish list was seven times too long.
+        // orderBy so repeat runs keep updating the SAME row. Databases seeded before this fix
+        // still hold one duplicate per dish per extra UTC day the old code ran; those are stale
+        // rows that nothing new points at, and a fresh `pnpm seed` on an empty database is the
+        // clean way out of them.
         const existingDish = await prisma.dish.findFirst({
           where: { kitchenId: kitchen.id, name: d.name },
+          orderBy: { id: "asc" },
         });
         const dish = existingDish
           ? await prisma.dish.update({ where: { id: existingDish.id }, data: fields })

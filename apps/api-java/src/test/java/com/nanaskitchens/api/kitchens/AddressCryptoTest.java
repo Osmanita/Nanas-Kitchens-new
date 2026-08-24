@@ -9,9 +9,17 @@ import org.junit.jupiter.api.Test;
  * NestJS service (packages/core/src/crypto.ts), so a round trip here is what actually matters. */
 class AddressCryptoTest {
 
+    /**
+     * Test-only key material. It used to be the literal that shipped in .env.example and is now
+     * published in the repo history, which made it indistinguishable at a glance from a real
+     * key still in use somewhere — the name and the value both say otherwise now. Any 32+ byte
+     * string works here; nothing about these tests depends on which one.
+     */
+    private static final String FIXTURE_KEY = "address-crypto-unit-test-fixture-key-not-a-secret";
+
     @Test
     void roundTripsPlainTextThroughEncryptAndDecrypt() {
-        AddressCrypto crypto = new AddressCrypto("32-byte-hex-key-change-me-0000000000");
+        AddressCrypto crypto = new AddressCrypto(FIXTURE_KEY);
         String address = "47 N Liberty St, Powell, OH";
 
         String encrypted = crypto.encrypt(address);
@@ -23,7 +31,7 @@ class AddressCryptoTest {
     @Test
     void sameInputEncryptsDifferentlyEachTime() {
         // Random IV per call — ciphertext must never repeat even for identical plaintext.
-        AddressCrypto crypto = new AddressCrypto("32-byte-hex-key-change-me-0000000000");
+        AddressCrypto crypto = new AddressCrypto(FIXTURE_KEY);
         String address = "89 S Liberty St, Powell, OH";
 
         assertThat(crypto.encrypt(address)).isNotEqualTo(crypto.encrypt(address));
@@ -48,7 +56,7 @@ class AddressCryptoTest {
 
     @Test
     void decryptingWithTheWrongKeyFails() {
-        AddressCrypto a = new AddressCrypto("32-byte-hex-key-change-me-0000000000");
+        AddressCrypto a = new AddressCrypto(FIXTURE_KEY);
         AddressCrypto b = new AddressCrypto("a-totally-different-encryption-key-here");
 
         String encrypted = a.encrypt("550 Home Rd, Powell, OH");
@@ -58,7 +66,7 @@ class AddressCryptoTest {
 
     @Test
     void tamperedCiphertextFailsGcmAuthentication() {
-        AddressCrypto crypto = new AddressCrypto("32-byte-hex-key-change-me-0000000000");
+        AddressCrypto crypto = new AddressCrypto(FIXTURE_KEY);
         String encrypted = crypto.encrypt("3200 Sawmill Pkwy, Powell, OH");
         String[] parts = encrypted.split("\\.");
         // Flip a character in the ciphertext body — GCM's auth tag must catch this.

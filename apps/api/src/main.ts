@@ -1,3 +1,5 @@
+// Side-effect import, and it must come first: everything below reads process.env.
+import "./env";
 import { NestFactory } from "@nestjs/core";
 import { ValidationPipe } from "@nestjs/common";
 import { AppModule } from "./app.module";
