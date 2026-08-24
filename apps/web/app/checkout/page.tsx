@@ -8,7 +8,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { API, apiFetch, getSession } from "../../lib/api";
+import { API, apiFetch, ensureSession, Session } from "../../lib/api";
 import { Cart, clearCart, getCart, money, setQty, subscribeCart } from "../../lib/cart";
 import PaymentStep, { PendingPayment } from "../components/PaymentStep";
 
@@ -64,7 +64,14 @@ export default function CheckoutPage() {
   const [conflict, setConflict] = useState(false);
   const [busy, setBusy] = useState(false);
 
-  const session = typeof window !== "undefined" ? getSession() : null;
+  // undefined = still resolving. getSession() alone only reads the local exp claim, so an
+  // expired-but-refreshable session was showing the "log in to check out" card with a full
+  // cart behind it; ensureSession() gives the silent refresh a chance to land first.
+  const [session, setSession] = useState<Session | null | undefined>(undefined);
+
+  useEffect(() => {
+    ensureSession().then(setSession);
+  }, []);
 
   useEffect(() => {
     setCart(getCart());
@@ -165,7 +172,7 @@ export default function CheckoutPage() {
     }
   }
 
-  if (!ready) return <main style={{ padding: 32 }} />;
+  if (!ready || session === undefined) return <main style={{ padding: 32 }} />;
 
   if (!cart) {
     return (

@@ -26,6 +26,9 @@ public class MenuRolloverJob {
 
     private static final Logger log = LoggerFactory.getLogger(MenuRolloverJob.class);
 
+    /** Arbitrary but fixed application-wide key for this job's Postgres advisory lock. */
+    private static final long ROLLOVER_LOCK_KEY = 4_827_150_113_001L;
+
     private final JdbcClient db;
     private final boolean enabled;
 
@@ -43,6 +46,20 @@ public class MenuRolloverJob {
     @Transactional
     public void rolloverPublishedMenus() {
         if (!enabled) {
+            return;
+        }
+        // Every instance runs this on the same schedule and would race on the same INSERTs.
+        // The unique index protects the DATA, but a constraint violation rolls the whole
+        // @Transactional method back, so the loser would drop every kitchen it had already
+        // rolled over that round. Take a transaction-scoped advisory lock instead: exactly one
+        // instance does the work, the others return immediately, and the lock is released on
+        // commit or rollback without any cleanup path of our own.
+        boolean locked = Boolean.TRUE.equals(db.sql("SELECT pg_try_advisory_xact_lock(:key)")
+                .param("key", ROLLOVER_LOCK_KEY)
+                .query(Boolean.class)
+                .single());
+        if (!locked) {
+            log.debug("Menu rollover: another instance holds the lock, skipping this round");
             return;
         }
         // Latest published menu from a previous UTC day, for kitchens with nothing today.
@@ -65,16 +82,25 @@ public class MenuRolloverJob {
                 .query((rs, n) -> new Source(
                         rs.getString("kitchen_id"), rs.getString("menu_day_id"), rs.getString("ready_windows")))
                 .list();
+        int rolled = 0;
         for (Source source : sources) {
             String newMenuDayId = UUID.randomUUID().toString();
-            db.sql("""
+            // ON CONFLICT DO NOTHING as a second line of defence behind the advisory lock: a
+            // seller publishing today's menu between the SELECT above and this INSERT would
+            // otherwise abort the whole round. No row back means someone else got there first.
+            boolean inserted = db.sql("""
                     INSERT INTO "MenuDay" (id, "kitchenId", date, status, "readyWindows")
                     VALUES (:id, :kitchenId, (now() AT TIME ZONE 'UTC')::date, 'published', :readyWindows::jsonb)
+                    ON CONFLICT ("kitchenId", date) DO NOTHING
                     """)
                     .param("id", newMenuDayId)
                     .param("kitchenId", source.kitchenId())
                     .param("readyWindows", source.readyWindows())
-                    .update();
+                    .update() > 0;
+            if (!inserted) {
+                continue;
+            }
+            rolled++;
             // Fresh inventory: portionsRemaining resets to portionsTotal for the new day.
             db.sql("""
                     INSERT INTO "MenuItem" (id, "menuDayId", "dishId", "portionsTotal", "portionsRemaining")
@@ -93,8 +119,8 @@ public class MenuRolloverJob {
                     .param("after", "{\"sourceMenuDayId\":\"" + source.menuDayId() + "\"}")
                     .update();
         }
-        if (!sources.isEmpty()) {
-            log.info("Menu rollover: republished today's menu for {} kitchen(s)", sources.size());
+        if (rolled > 0) {
+            log.info("Menu rollover: republished today's menu for {} kitchen(s)", rolled);
         }
     }
 }

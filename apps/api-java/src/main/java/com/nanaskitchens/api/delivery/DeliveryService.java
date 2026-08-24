@@ -29,18 +29,21 @@ public class DeliveryService {
     private final JsonMapper jsonMapper;
     private final byte[] webhookSecret;
     private final com.nanaskitchens.api.notifications.NotificationsService notifications;
+    private final com.nanaskitchens.api.kitchens.AddressCrypto addressCrypto;
 
     public DeliveryService(
             JdbcClient db,
             DeliveryProvider provider,
             JsonMapper jsonMapper,
             @Value("${app.delivery.webhook-secret}") String webhookSecret,
-            com.nanaskitchens.api.notifications.NotificationsService notifications) {
+            com.nanaskitchens.api.notifications.NotificationsService notifications,
+            com.nanaskitchens.api.kitchens.AddressCrypto addressCrypto) {
         this.db = db;
         this.provider = provider;
         this.jsonMapper = jsonMapper;
         this.webhookSecret = webhookSecret.getBytes(StandardCharsets.UTF_8);
         this.notifications = notifications;
+        this.addressCrypto = addressCrypto;
     }
 
     /** Called when the seller marks a delivery-fulfillment order Ready (AC2). */
@@ -50,8 +53,15 @@ public class DeliveryService {
         if (existing != null) {
             return existing; // ready re-triggered — keep the existing job
         }
-        DeliveryProvider.Quote quote = provider.quote(null, orderId); // AC1: fee via provider quote
-        DeliveryProvider.CreatedDelivery created = provider.create(quote.quoteId(), orderId);
+        // Both legs of the trip, decrypted here and nowhere else: the kitchen the courier picks
+        // up from and the buyer's drop-off. "null, orderId" used to be passed instead, which is
+        // why Order.deliveryAddressEncrypted was written at checkout and then never read by
+        // anything — the delivery flow had no address on it at all.
+        Addresses addresses = addressesFor(orderId);
+        DeliveryProvider.Quote quote =
+                provider.quote(addresses.pickup(), addresses.dropoff(), orderId); // AC1: fee via provider quote
+        DeliveryProvider.CreatedDelivery created =
+                provider.create(quote.quoteId(), orderId, addresses.pickup(), addresses.dropoff());
         db.sql("""
                 INSERT INTO "DeliveryJob" (id, "orderId", provider, "externalId", status, "trackingUrl", "feeCents")
                 VALUES (:id, :orderId, :provider, :externalId, 'created', :trackingUrl, :feeCents)
@@ -66,6 +76,32 @@ public class DeliveryService {
         audit(actor, orderId, "delivery_create", Map.of(
                 "provider", provider.name(), "externalId", created.externalId(), "feeCents", created.feeCents()));
         return findByOrderId(orderId);
+    }
+
+    private record Addresses(String pickup, String dropoff) {
+    }
+
+    /**
+     * The kitchen address and the order's drop-off address, both decrypted. A delivery order
+     * with no stored drop-off (placed before the column was written) yields null rather than
+     * failing: the seller can still mark it Ready, and the missing address is visible as such
+     * instead of blocking the transition.
+     */
+    private Addresses addressesFor(String orderId) {
+        return db.sql("""
+                SELECT k."addressEncrypted" AS pickup, o."deliveryAddressEncrypted" AS dropoff
+                FROM "Order" o JOIN "Kitchen" k ON k.id = o."kitchenId"
+                WHERE o.id = :orderId
+                """)
+                .param("orderId", orderId)
+                .query((rs, n) -> new Addresses(
+                        decryptOrNull(rs.getString("pickup")), decryptOrNull(rs.getString("dropoff"))))
+                .optional()
+                .orElse(new Addresses(null, null));
+    }
+
+    private String decryptOrNull(String encrypted) {
+        return encrypted == null ? null : addressCrypto.decrypt(encrypted);
     }
 
     public record WebhookEvent(String eventId, String externalId, String status) {

@@ -40,6 +40,13 @@ export default tseslint.config(
         "error",
         { argsIgnorePattern: "^_", varsIgnorePattern: "^_", caughtErrors: "none" },
       ],
+      // Back on. typescript-eslint's eslint-recommended disables the core rule for .ts files
+      // on the assumption that tsc will catch it - which only holds for files a tsconfig
+      // actually includes. apps/api/tsconfig.json only includes "src", so prisma/seed.ts was
+      // covered by neither, and a duplicate "photo" key sat there silently killing every
+      // per-dish photo. The rule reads ObjectExpression nodes, so TS interfaces and type
+      // literals are unaffected and there is nothing to lose by having it on everywhere.
+      "no-dupe-keys": "error",
     },
   },
 

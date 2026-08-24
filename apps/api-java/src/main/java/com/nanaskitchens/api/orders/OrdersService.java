@@ -11,6 +11,8 @@ import com.nanaskitchens.api.kitchens.dto.MenuDayResponse;
 import com.nanaskitchens.api.orders.dto.CreateOrderRequest;
 import com.nanaskitchens.api.orders.dto.OrderDetailResponse;
 import com.nanaskitchens.api.orders.dto.OrderSummary;
+import jakarta.validation.ConstraintViolation;
+import jakarta.validation.Validator;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -57,6 +59,12 @@ public class OrdersService {
     // one of these back as a confirmed order (see place()).
     private static final Set<String> DEAD_STATUSES = Set.of("cancelled", "declined");
 
+    // FR10 step-by-step disclosure, seller side: the drop-off address appears only once this
+    // seller has actually taken the order. Before that ('pending'/'confirmed') there is no reason
+    // for them to hold a stranger's home address, and after a decline/cancel there is none either.
+    private static final Set<String> SELLER_ADDRESS_VISIBLE =
+            Set.of("accepted", "preparing", "ready", "completed");
+
     /** Story 4.1 seller transitions: current status -> allowed next statuses. */
     private static final Map<String, Set<String>> SELLER_TRANSITIONS = Map.of(
             "confirmed", Set.of("accepted", "declined"),
@@ -73,6 +81,7 @@ public class OrdersService {
     private final GeocodingService geocoding;
     private final PaymentProvider payments;
     private final NotificationsService notifications;
+    private final Validator validator;
 
     public OrdersService(
             JdbcClient db,
@@ -83,7 +92,8 @@ public class OrdersService {
             DeliveryService deliveryService,
             GeocodingService geocoding,
             PaymentProvider payments,
-            NotificationsService notifications) {
+            NotificationsService notifications,
+            Validator validator) {
         this.db = db;
         this.inventory = inventory;
         this.addressCrypto = addressCrypto;
@@ -93,6 +103,7 @@ public class OrdersService {
         this.geocoding = geocoding;
         this.payments = payments;
         this.notifications = notifications;
+        this.validator = validator;
     }
 
     /**
@@ -102,6 +113,7 @@ public class OrdersService {
      */
     @Transactional
     public Map<String, Object> place(String buyerId, CreateOrderRequest input) {
+        validateInput(input);
         record MenuRow(String menuItemId, String dishName, int priceCents) {
         }
         List<MenuRow> menuRows = db.sql("""
@@ -347,6 +359,24 @@ public class OrdersService {
     }
 
     /**
+     * The bean-validation constraints on CreateOrderRequest are enforced by @Valid on the
+     * controller, so only the REST path ever saw them: the chat agent's createOrder tool and
+     * anything else calling place() directly went straight past them, and a negative courier
+     * tip or a bogus fulfillment value got through. Running them here means every caller of
+     * place() gets the same contract, whichever door it came in by.
+     */
+    private void validateInput(CreateOrderRequest input) {
+        Set<ConstraintViolation<CreateOrderRequest>> violations = validator.validate(input);
+        if (!violations.isEmpty()) {
+            String detail = violations.stream()
+                    .map(v -> v.getPropertyPath() + " " + v.getMessage())
+                    .sorted()
+                    .collect(java.util.stream.Collectors.joining("; "));
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "INVALID_ORDER: " + detail);
+        }
+    }
+
+    /**
      * FR5's 10-mile radius applies to delivery drop-offs too. The address is geocoded with
      * tiered fallbacks (dev: Nominatim) and measured against the kitchen's PostGIS point.
      * If no variant of the address resolves, the order is rejected so the buyer can give a
@@ -367,6 +397,10 @@ public class OrdersService {
                     "ADDRESS_OUTSIDE_US: delivery is only available within the United States right now. "
                             + "Offer pickup, or ask for a US delivery address.");
         }
+        // "AND geo IS NOT NULL" used to make an ungeocoded kitchen return no row at all, leaving
+        // meters null and short-circuiting the check below — so missing data silently lifted the
+        // radius limit instead of enforcing it. Fail closed: an un-geocoded kitchen cannot take
+        // delivery orders until its point is set.
         Double meters = db.sql("""
                 SELECT ST_Distance(geo, ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geography)
                 FROM "Kitchen" WHERE id = :kitchenId AND geo IS NOT NULL
@@ -377,7 +411,13 @@ public class OrdersService {
                 .query(Double.class)
                 .optional()
                 .orElse(null);
-        if (meters != null && meters > DELIVERY_RADIUS_MILES * METERS_PER_MILE) {
+        if (meters == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "KITCHEN_NOT_GEOCODED: this kitchen has no map location yet, so the delivery "
+                            + "radius cannot be checked. Offer pickup, or ask the seller to set the "
+                            + "kitchen address.");
+        }
+        if (meters > DELIVERY_RADIUS_MILES * METERS_PER_MILE) {
             double miles = Math.round(meters / METERS_PER_MILE * 10) / 10.0;
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     "ADDRESS_OUT_OF_RANGE: drop-off is " + miles
@@ -584,6 +624,7 @@ public class OrdersService {
         return db.sql("""
                 SELECT o.id, o.status, o."readySlot", o.fulfillment, o."totalCents",
                        o."deliveryFeeCents", o."tipCents", o."createdAt",
+                       o."deliveryAddressEncrypted",
                        dj.provider AS delivery_provider, dj.status AS delivery_status,
                        dj."trackingUrl" AS delivery_tracking_url,
                        u.email AS buyer_email, u.phone AS buyer_phone,
@@ -622,6 +663,20 @@ public class OrdersService {
                     row.put("items", parseItemsJson(rs.getString("items_json")));
                     row.put("buyerEmail", rs.getString("buyer_email"));
                     row.put("buyerPhone", rs.getString("buyer_phone"));
+                    // The drop-off address was written at checkout and then read by nobody, so a
+                    // delivery order could be placed that neither the seller nor the courier could
+                    // ever see an address for. Disclosed on the same FR10 step-by-step principle
+                    // the buyer's pickup address uses: only once this seller has taken the order,
+                    // never on pending/confirmed/declined/cancelled.
+                    boolean showAddress = "delivery".equals(rs.getString("fulfillment"))
+                            && SELLER_ADDRESS_VISIBLE.contains(rs.getString("status"));
+                    // Orders placed before the column was written carry null; decrypt() would NPE
+                    // on those and take the seller's whole board down with them.
+                    String encryptedAddress = rs.getString("deliveryAddressEncrypted");
+                    row.put("deliveryAddress",
+                            showAddress && encryptedAddress != null
+                                    ? addressCrypto.decrypt(encryptedAddress)
+                                    : null);
                     // Story 4.1 board — delivery-partner status chip (null for pickup / pre-ready)
                     row.put("deliveryProvider", rs.getString("delivery_provider"));
                     row.put("deliveryStatus", rs.getString("delivery_status"));

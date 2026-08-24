@@ -128,7 +128,11 @@ const KITCHENS = [
 ];
 
 /** Dev photo + kcal metadata by dish-name keyword (mirrors /public/dishes assets). */
-function dishMeta(name: string): { photo: string; calories: number } {
+/** Used only when a dish neither matches dishMeta() nor carries its own photo. */
+const DEFAULT_DISH_PHOTO = "/dishes/gozleme.jpg";
+
+/** photo is null when no curated local image fits the dish — the caller falls back. */
+function dishMeta(name: string): { photo: string | null; calories: number } {
   const n = name.toLowerCase();
   if (n.includes("mant")) return { photo: "/dishes/manti.jpg", calories: 560 };
   if (n.includes("yaprak sarma")) return { photo: "/dishes/sarma.jpg", calories: 320 };
@@ -141,7 +145,7 @@ function dishMeta(name: string): { photo: string; calories: number } {
   if (n.includes("mapo") || n.includes("dan dan")) return { photo: "/dishes/mapo.jpg", calories: 450 };
   if (n.includes("cucumber")) return { photo: "/dishes/mapo.jpg", calories: 120 };
   if (n.includes("mole") || n.includes("tamales") || n.includes("tlayuda")) return { photo: "/dishes/mole.jpg", calories: 550 };
-  return { photo: "/dishes/gozleme.jpg", calories: 420 };
+  return { photo: null, calories: 420 };
 }
 
 async function main() {
@@ -210,18 +214,29 @@ async function main() {
       });
       for (const d of k.dishes) {
         const meta = dishMeta(d.name);
-        const dish = await prisma.dish.create({
-          data: {
-            kitchenId: kitchen.id,
-            name: d.name,
-            description: d.description,
-            photo: d.photo,
-            priceCents: d.priceCents,
-            dietaryTags: d.dietaryTags,
-            photo: meta.photo,
-            calories: meta.calories,
-          },
+        const fields = {
+          description: d.description,
+          // Curated local file first, then the dish's own photo, then the generic fallback.
+          // This used to be two "photo" keys in one object literal — the second silently won,
+          // so every per-dish photo above was dead code and any dish dishMeta() did not match
+          // (Lahmacun, Izgara Kofte) was served someone else's picture.
+          // "photo" in d: only some dish literals carry one, so the union type has no such
+          // property in common. (The old `photo: d.photo` line was a type error too — nothing
+          // was type-checking this file. See tsconfig.seed.json.)
+          photo: meta.photo ?? ("photo" in d ? d.photo : undefined) ?? DEFAULT_DISH_PHOTO,
+          priceCents: d.priceCents,
+          dietaryTags: d.dietaryTags,
+          calories: meta.calories,
+        };
+        // The Dish catalogue belongs to the kitchen, not to the day. Creating it unconditionally
+        // meant every new UTC day (when the MenuDay guard above lets us in) duplicated all of a
+        // kitchen's dishes; after a week the seller's dish list was seven times too long.
+        const existingDish = await prisma.dish.findFirst({
+          where: { kitchenId: kitchen.id, name: d.name },
         });
+        const dish = existingDish
+          ? await prisma.dish.update({ where: { id: existingDish.id }, data: fields })
+          : await prisma.dish.create({ data: { kitchenId: kitchen.id, name: d.name, ...fields } });
         await prisma.menuItem.create({
           data: { menuDayId: menuDay.id, dishId: dish.id, portionsTotal: d.portions, portionsRemaining: d.portions },
         });

@@ -11,9 +11,15 @@ public interface DeliveryProvider {
     /** Prisma "DeliveryProvider" enum value: doordash | grubhub | mock. */
     String name();
 
-    Quote quote(String pickupAddress, String orderId);
+    /**
+     * dropoffAddress is the decrypted street address the courier delivers to. It used to be
+     * missing from this interface entirely and DeliveryService passed null for the pickup
+     * address as well, so a real partner adapter had nothing to dispatch against: the address
+     * was written at checkout and read by nobody.
+     */
+    Quote quote(String pickupAddress, String dropoffAddress, String orderId);
 
-    CreatedDelivery create(String quoteId, String orderId);
+    CreatedDelivery create(String quoteId, String orderId, String pickupAddress, String dropoffAddress);
 
     record Quote(String quoteId, int feeCents) {
     }

@@ -8,6 +8,7 @@
     "test": "jest --passWithNoTests",
     "test:e2e": "jest --config test/jest-e2e.json --runInBand",
     "seed": "ts-node --transpile-only prisma/seed.ts",
+    "typecheck:seed": "tsc -p tsconfig.seed.json",
     "prisma:generate": "prisma generate",
     "prisma:migrate:dev": "prisma migrate dev",
     "prisma:migrate:deploy": "prisma migrate deploy"

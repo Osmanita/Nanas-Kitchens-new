@@ -102,7 +102,8 @@ export default function SellerEarningsPage() {
     <main style={{ maxWidth: 820, margin: "0 auto", padding: "32px 24px" }}>
       <h1 style={{ margin: "0 0 4px", fontSize: 26, color: "var(--brand-green)" }}>Earnings</h1>
       <p style={{ margin: "0 0 20px", color: "var(--brand-muted)" }}>
-        Your payout is each order total minus the 15% platform commission.
+        Your payout is the food total of each order minus the 15% platform commission. Delivery
+        fees and courier tips go to the courier, not to you, so they are not counted here.
       </p>
 
       {data === undefined ? (

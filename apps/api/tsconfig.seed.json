@@ -1,0 +1,14 @@
+// tsconfig.json only includes "src", so everything under prisma/ — the seed script above all —
+// was outside any type-checked program. Combined with typescript-eslint switching off the core
+// no-dupe-keys rule for .ts files, that left prisma/seed.ts checked by nothing at all, and a
+// duplicate object key silently disabled every per-dish photo. This program exists purely to
+// type-check those files; it emits nothing, so it cannot affect dist/.
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "declaration": false,
+    "sourceMap": false
+  },
+  "include": ["prisma"]
+}

@@ -19,8 +19,26 @@ pnpm install
 pnpm --filter api prisma:generate
 pnpm --filter api prisma:migrate:dev
 pnpm dev                      # eski api :3001, web :3000, mcp :3002
+```
+
+Java API'yi ayri baslat. **Spring `.env` OKUMAZ** ve `JWT_SECRET` / `ADDRESS_ENC_KEY`
+artik varsayilansiz (yoksa uygulama acilmiyor), yani once `.env`'i process'e export et:
+
+```powershell
+# Windows / PowerShell
+cd apps/api-java
+Get-Content ../../.env | % { if ($_ -match '^([^#=]+)=(.*)$') { [Environment]::SetEnvironmentVariable($Matches[1],$Matches[2],'Process') } }
+.\mvnw.cmd spring-boot:run    # yeni Java API :8080
+```
+
+```bash
+# macOS / Linux
+set -a && . ./.env && set +a
 (cd apps/api-java && ./mvnw spring-boot:run)   # yeni Java API :8080
 ```
+
+Windows'ta `.\dev.cmd` bunlarin hepsini (compose, migrate, export, dev serverlar) tek
+komutta yapar — ayrinti icin `CLAUDE.md`'deki "Calistirma" bolumune bak.
 
 ## Hizli test
 ```bash

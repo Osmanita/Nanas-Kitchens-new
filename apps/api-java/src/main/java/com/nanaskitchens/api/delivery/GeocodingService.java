@@ -7,6 +7,9 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -41,13 +44,31 @@ public class GeocodingService {
      * variant resolves.
      */
     public Point geocode(String address) {
-        String[] tokens = address.trim().replaceAll("[,;]+", " ").split("\\s+");
-        for (int drop = 0; drop <= Math.min(3, tokens.length - 2); drop++) {
+        String key = address.trim().replaceAll("[,;]+", " ").replaceAll("\\s+", " ").toLowerCase();
+        Optional<Point> cached = cacheGet(key);
+        if (cached != null) {
+            return cached.orElse(null);
+        }
+        Point result = lookupTiered(key);
+        cachePut(key, result);
+        return result;
+    }
+
+    private Point lookupTiered(String address) {
+        String[] tokens = address.split(" ");
+        // Floor the upper bound at 0: for a single-token address tokens.length - 2 is -1, so the
+        // loop used to run zero times and every one-word address came back ADDRESS_NOT_FOUND
+        // without a single request being made. The full address must always get one attempt.
+        int maxDrop = Math.max(0, Math.min(3, tokens.length - 2));
+        for (int drop = 0; drop <= maxDrop; drop++) {
             String candidate = String.join(" ",
                     java.util.Arrays.copyOfRange(tokens, drop, tokens.length));
             Point point = lookup(candidate);
             if (point != null) {
                 return point;
+            }
+            if (drop == maxDrop) {
+                break; // no further attempt to rate-limit against — do not stall the caller
             }
             try {
                 Thread.sleep(1100); // Nominatim usage policy: max 1 request/second
@@ -57,6 +78,38 @@ public class GeocodingService {
             }
         }
         return null;
+    }
+
+    /**
+     * Bounded LRU over normalised addresses, negative results included. Every geocode() call
+     * happens on the request thread and sleeps 1.1s between tiers, so an uncached miss costs the
+     * order path several seconds; the same handful of addresses are looked up over and over.
+     * Caching also keeps us inside Nominatim's usage policy — they ban the egress IP of anything
+     * that looks like bulk server-side use, which would take delivery ordering down entirely.
+     * Per-process, so it does not survive a restart and does not deduplicate across tasks; the
+     * real fix when this moves to ECS is a shared cache or a paid geocoder behind this same seam.
+     */
+    private static final int CACHE_MAX = 500;
+
+    private final Map<String, Optional<Point>> cache =
+            new LinkedHashMap<>(64, 0.75f, true) {
+                @Override
+                protected boolean removeEldestEntry(Map.Entry<String, Optional<Point>> eldest) {
+                    return size() > CACHE_MAX;
+                }
+            };
+
+    /** Returns null when the address has not been looked up yet (distinct from a cached miss). */
+    private Optional<Point> cacheGet(String key) {
+        synchronized (cache) {
+            return cache.get(key);
+        }
+    }
+
+    private void cachePut(String key, Point value) {
+        synchronized (cache) {
+            cache.put(key, Optional.ofNullable(value));
+        }
     }
 
     private Point lookup(String address) {

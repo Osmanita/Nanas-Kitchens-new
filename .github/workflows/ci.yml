@@ -39,6 +39,9 @@ jobs:
       - run: pnpm --filter api prisma:generate
       - run: pnpm --filter api prisma:migrate:deploy
       - run: pnpm lint
+      # prisma/ sits outside apps/api/tsconfig.json's "include", so nothing type-checked the
+      # seed script - see apps/api/tsconfig.seed.json.
+      - run: pnpm --filter api typecheck:seed
       - run: pnpm build
       - run: pnpm test
 

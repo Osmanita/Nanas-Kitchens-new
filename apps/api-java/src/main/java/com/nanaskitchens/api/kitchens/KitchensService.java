@@ -302,9 +302,19 @@ public class KitchensService {
 
     /** Story 5.1 / get_menu: the dated published menu of a kitchen, or null. */
     public MenuDayResponse publishedMenu(String kitchenId, String date) {
-        LocalDate day = date != null && !date.isBlank()
-                ? LocalDate.parse(date.length() > 10 ? date.substring(0, 10) : date)
-                : LocalDate.now(ZoneOffset.UTC);
+        LocalDate day;
+        if (date != null && !date.isBlank()) {
+            try {
+                day = LocalDate.parse(date.length() > 10 ? date.substring(0, 10) : date);
+            } catch (java.time.format.DateTimeParseException e) {
+                // This is a public endpoint: a malformed ?date= is the caller's mistake, so it
+                // has to answer 400. Left unguarded the parse exception escaped as a 500.
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "INVALID_DATE: expected an ISO date (YYYY-MM-DD)");
+            }
+        } else {
+            day = LocalDate.now(ZoneOffset.UTC);
+        }
         List<Map<String, Object>> rows = db.sql("""
                 SELECT md.id, md."kitchenId", md.date, md.status::text AS status,
                        md."readyWindows"::text AS ready_windows,

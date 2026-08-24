@@ -31,6 +31,9 @@ interface SellerOrder {
   items: OrderLineItem[];
   buyerEmail: string;
   buyerPhone: string | null;
+  /** Drop-off street address, decrypted server-side. Delivery orders only, and only once this
+   * kitchen has accepted the order (FR10 step-by-step disclosure) — null everywhere else. */
+  deliveryAddress: string | null;
   deliveryProvider: string | null;
   deliveryStatus: string | null;
   deliveryTrackingUrl: string | null;
@@ -351,6 +354,12 @@ function OrderCard({
         👤 {order.buyerEmail}
         {order.buyerPhone && <> · 📞 {order.buyerPhone}</>}
       </p>
+
+      {order.fulfillment === "delivery" && order.deliveryAddress && (
+        <p style={{ margin: "0 0 4px", fontSize: 13, color: "var(--brand-muted)" }}>
+          📍 {order.deliveryAddress}
+        </p>
+      )}
 
       {order.items.length > 0 ? (
         <ul style={{ listStyle: "none", margin: "0 0 8px", padding: 0, display: "flex", flexDirection: "column", gap: 4 }}>

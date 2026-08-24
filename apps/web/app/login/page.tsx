@@ -5,6 +5,13 @@ import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
 import { login } from "../../lib/api";
 
+/** A leading "/" is not enough: "//evil.com" and "/\evil.com" are protocol-relative URLs that
+ * browsers resolve to another origin, so the post-login redirect would leave the site. Only
+ * accept a path whose second character is a normal path character. */
+function isSafeNext(next: string | null): next is string {
+  return !!next && next.startsWith("/") && next[1] !== "/" && next[1] !== "\\";
+}
+
 export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -19,7 +26,7 @@ export default function LoginPage() {
     try {
       await login(email, password);
       const next = new URLSearchParams(window.location.search).get("next");
-      router.push(next && next.startsWith("/") ? next : "/");
+      router.push(isSafeNext(next) ? next : "/");
     } catch (err) {
       setError(err instanceof Error && err.message === "INVALID_CREDENTIALS"
         ? "Email or password is incorrect."

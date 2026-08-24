@@ -9,5 +9,7 @@ public record RegisterRequest(
         @Email @NotBlank String email,
         @NotBlank @Size(min = 8) String password,
         // Only self-serve roles; inspector/admin are assigned by an admin (mirrors AC2).
-        @Pattern(regexp = "buyer|seller") String role) {
+        // @NotBlank as well as @Pattern: jakarta treats null as valid for @Pattern, so a
+        // request with no role passed validation and then failed further down as a 500.
+        @NotBlank @Pattern(regexp = "buyer|seller") String role) {
 }

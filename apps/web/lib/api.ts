@@ -53,7 +53,20 @@ export async function ensureSession(): Promise<Session | null> {
   return null;
 }
 
-async function tryRefresh(): Promise<boolean> {
+/** Refresh tokens are single-use: the server rotates them and invalidates the old one.
+ * Concurrent 401s must therefore share ONE refresh call — two parallel POSTs would send
+ * the same token twice, the loser would get a non-ok response and clearTokens() would wipe
+ * the fresh tokens the winner had just saved, logging the user out for no reason. */
+let refreshInFlight: Promise<boolean> | null = null;
+
+function tryRefresh(): Promise<boolean> {
+  refreshInFlight ??= doRefresh().finally(() => {
+    refreshInFlight = null;
+  });
+  return refreshInFlight;
+}
+
+async function doRefresh(): Promise<boolean> {
   const refreshToken = typeof window === "undefined" ? null : localStorage.getItem(REFRESH_KEY);
   if (!refreshToken) return false;
   const res = await fetch(`${API}/auth/refresh`, {

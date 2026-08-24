@@ -10,6 +10,8 @@ import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.event.TransactionalEventListener;
+import reactor.core.Disposable;
+import reactor.core.publisher.ConnectableFlux;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Sinks;
 import tools.jackson.databind.json.JsonMapper;
@@ -25,6 +27,8 @@ import tools.jackson.databind.json.JsonMapper;
 public class PortionsStreamService {
 
     private static final Duration HEARTBEAT = Duration.ofSeconds(15);
+    /** Events buffered while the initial snapshot query runs; a handful is plenty. */
+    private static final int REPLAY_BUFFER = 32;
 
     private final JdbcClient db;
     private final JsonMapper jsonMapper;
@@ -39,9 +43,25 @@ public class PortionsStreamService {
     public Flux<ServerSentEvent<String>> stream(String kitchenId) {
         Sinks.Many<String> sink = sinksByKitchen.computeIfAbsent(
                 kitchenId, k -> Sinks.many().multicast().directBestEffort());
-        Flux<ServerSentEvent<String>> data = Flux.defer(() -> Flux.just(snapshotJson(kitchenId)))
-                .concatWith(sink.asFlux())
-                .map(json -> ServerSentEvent.builder(json).event("portions").build());
+        // concatWith() only subscribes to the sink once the snapshot has been emitted, and the
+        // sink is directBestEffort — so any update landing between "snapshot query ran" and
+        // "subscriber attached" had no subscriber and was dropped, leaving the client showing a
+        // count that is silently stale until the next change. Connect to the live stream FIRST
+        // and let replay() hold whatever arrives while the snapshot query is still running.
+        // A replayed event that the snapshot already reflects just repeats the same counts.
+        Flux<ServerSentEvent<String>> data = Flux.defer(() -> {
+            ConnectableFlux<String> live = sink.asFlux().replay(REPLAY_BUFFER);
+            Disposable connection = live.connect();
+            String snapshot;
+            try {
+                snapshot = snapshotJson(kitchenId);
+            } catch (RuntimeException e) {
+                connection.dispose();
+                throw e;
+            }
+            return Flux.concat(Flux.just(snapshot), live)
+                    .doFinally(signal -> connection.dispose());
+        }).map(json -> ServerSentEvent.builder(json).event("portions").build());
         Flux<ServerSentEvent<String>> heartbeat = Flux.interval(HEARTBEAT)
                 .map(i -> ServerSentEvent.<String>builder().comment("heartbeat").build());
         return Flux.merge(data, heartbeat);
