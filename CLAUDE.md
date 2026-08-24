@@ -708,10 +708,10 @@ adımı kondu. tsconfig ilk koşuşunda ölü satırın **tip hatası da** oldu�
 ⚠️ **`ADDRESS_ENC_KEY` kasten dokunulmadı** — döndürmek mevcut şifreli adresleri kalıcı
 olarak okunamaz yapar. Doğru an, ECS'e geçerken yeni DB kurulduğunda.
 
-**Hâlâ ECS'e engel (güncel):** `E5` MCP OAuth store'u hâlâ in-memory (Redis bağlı olduğu
-için artık küçük bir iş); `E2` migration job'ının **altyapı** tarafı (ECS RunTask + deploy
-adımı); `E3` domain gelince web imajının yeniden build edilmesi; `E11` geocoding hâlâ
+**Hâlâ ECS'e engel (güncel):** `E2` migration job'ının **altyapı** tarafı (ECS RunTask +
+deploy adımı); `E3` domain gelince web imajının yeniden build edilmesi; `E11` geocoding hâlâ
 sipariş yolunda ve istek thread'inde blokluyor (cache eklendi ama asıl sorun duruyor).
+`E5` 10. turda kapandı.
 
 ### 9. tur — S3 storage (2026-08-24)
 
@@ -759,23 +759,84 @@ API-uyumlu ve bu, kablolamayı kapsıyor; IAM, bucket policy ve region davranı�
 
 Java testleri 39 → 42.
 
-## İsim / domain brainstorm (2026-08-07)
+### 10. tur — MCP OAuth store'u Redis'e taşındı, E5 kapandı (2026-08-25)
 
-"Nanas' Kitchens" şu an **placeholder isim** — 45 yaş civarı hedef kitleye eski/yaşlı
-hissettirebileceği düşünülüyor. Route 53 domain alımı isim netleşene kadar bilinçli olarak
-ertelendi (AWS ECS/ALB domain olmadan da default AWS DNS adresiyle çalışır, isim netleşince
-tek değişiklik host-bazlı routing + Route 53 kaydı olacak, mimariye dokunmaz).
+`apps/mcp-server` beş adet modül seviyesi `Map` tutuyordu (clients, codes, grants, refreshIdx,
+rateBuckets). Bunlar tek process olduğu sürece doğru çalışıyordu; ikinci task'ta:
 
-Yön: kültür vurgusu değil **"world" temalı** bir isim (kod tabanındaki eski çalışma adı
-`culture_eats`/CulturEats'in aksine). Aday isimler (World + X kalıbı ağırlıklı):
-- **WorldBite** — şu ana kadarki favori.
-- Diğer adaylar: WorldBites, WorldKitchens, WorldTable, WorldPlate, WorldFare,
-  OneWorldKitchen, WorldFeast, WorldPantry, WorldDish, WorldFork, WorldSupper, WorldCrave,
-  WorldPlatter, PassportKitchen (world kelimesi yok ama seyahat/keşif hissi taşıyor).
+- A'da kaydolan istemciyi B tanımıyor, A'nın verdiği authorization code B'de kullanılamıyor,
+- ve en kötüsü: **A'da döndürülmüş bir refresh token B'de hâlâ canlı görünüyor** — yani
+  sızmış bir token B'ye karşı oynatıldığında yeniden kullanım tespiti hiç tetiklenmiyor ve
+  aile imha edilmiyor.
 
-Henüz kesin karar yok, domain müsaitliği kontrol edilmedi. İsim netleşince: Route 53'ten
-domain al → ECS/ALB deployment'ı kaldığı yerden devam ettir → repodaki "Nanas' Kitchens"
-referanslarını (README, seed verisi, UI metinleri) güncelle.
+Hepsi Redis'e taşındı (`src/store.ts`), `mcp:` altında ve **her anahtar TTL'li**.
+
+**Kritik parça — atomik yakma.** Eski kod `ref.consumed = true`'yu ilk `await`'ten ÖNCE
+yapıyordu ve bu sıralama taşıyıcıydı. Redis'te karşılığı **tek bir Lua script**: oku, tüketilmiş
+mi bak, tüketilmiş olarak işaretle — hepsi tek adımda. GET-sonra-SET'e bölmek deliği aynen geri
+getiriyor, üstelik daha genişletiyor (iki istek aynı instance'ta bile olmak zorunda değil).
+⚠️ Mutasyon kontrolü bunu kanıtladı: script'i GET+SET'e bölünce eşzamanlılık testi
+`expected 2 to be 1` verdi — platform token'ı iki kez harcanıyor.
+
+⚠️ **Sıralama tuzağı (bir kez düştüm):** tüketimi en başa koyarsan, yanlış `client_id` gönderen
+bir istek meşru istemcinin token'ını yakar. Doğru sıra: **peek → grant/client kontrolleri →
+atomik yakma → platform çağrısı**. Kontroller token'ı harcamadan reddedebilmeli. Mevcut test
+(`treats a wrong client_id as a misconfiguration`) bunu anında yakaladı.
+
+**Diğer değişiklikler:**
+
+- `sweep()` **silindi** — TTL'ler onun işini yapıyor. Eskisi dakikada bir kendini kısıtlıyordu,
+  yani ondan hızlı gelen bir sel arada map'leri kendine buluyordu; o pencere de kapandı.
+- **Rate limit artık paylaşımlı** (`INCR` + `PEXPIRE`). Process başına limit, N task'ta
+  gerçekte N×limit demekti — ve önündeki ALB'nin tüm amacı ardışık denemeleri farklı task'lara
+  dağıtmak. Pencere ilk isteğe sabitleniyor, baskıyı sürdürerek uzatılamıyor.
+- Authorization code artık **`GETDEL`** ile alınıyor (get-sonra-delete iki tur, ikisi birden
+  aynı kodu kullanabilirdi).
+- `MAX_CLIENTS`/`MAX_CODES`/`MAX_GRANTS` dolduğunda artık **503**; eskiden en eskiyi tahliye
+  ediyordu. TTL'ler zaten drenajı yapıyor, sel sırasında başkasının kaydını silmek doğru değil.
+- `MCP_REDIS_PREFIX` **çağrı başına** okunuyor, import'ta değil — `clientIp()`'in
+  `MCP_TRUSTED_PROXIES` dersi (5. tur): import'ta donmuş değer testten değiştirilemiyor.
+
+**Test: 49 → 53.** Mevcut 49'un **iddiaları değişmedi** (sadece bir `await` eklendi), yani ağ
+korundu. Yeni dördü `vi.resetModules()` ile ikinci bir modül örneği kurup "ikinci ECS task"ını
+taklit ediyor. Mutasyon kontrolü: store'u process-local yapınca üçü birden kırmızı — biri
+`expected 200 to be 400`, yani sızmış token kabul ediliyor.
+⚠️ Dördüncüsü ("honours a revocation") bu mutasyonda **geçiyor**: "iptal edildi" ile
+"hiç duymadım" ikisi de 400. Test dosyasında bunu yazdım; tek başına bir şey kanıtlamıyor.
+
+⚠️ **Test durumu artık process'ten uzun yaşıyor.** `beforeEach` Redis'i (kendi prefix'iyle)
+siliyor; olmazsa ikinci koşu birincinin rate-limit sayaçlarını devralıyor ve limit testleri
+kodla ilgisi olmayan bir sebeple patlıyor.
+
+## İsim — KARAR VERİLDİ: "Nanas' Kitchens" (2026-08-24)
+
+**İsim kesinleşti, placeholder değil.** Uzun süre açık duran "world temalı bir isme
+geçilsin mi" sorusu kapandı: geçilmiyor. `WorldBite` ve diğer `World*` adayları **elendi**;
+aşağıdaki liste yalnızca tarihsel kayıt olarak duruyor, yeniden açılacak bir tartışma değil.
+
+Bunun kapattığı işler:
+- Route 53 domain alımı artık isim beklemiyor — **tek engel kalmadı**.
+- Repo genelinde bir yeniden adlandırma **gerekmiyor**; README, seed verisi ve UI metinleri
+  zaten bu ismi kullanıyor.
+
+Geriye kalan tek tutarsızlık, kod tabanındaki **eski çalışma adı**: veritabanı adı
+`culture_eats`, npm scope'u `@culture-eats/core`. İkisi de artık hiçbir şeyi karşılamıyor.
+Kozmetik ama ucuz da değil — DB adını değiştirmek migration + her iki backend'in bağlantı
+dizesi demek, en mantıklı anı **ECS'e geçerken yeni DB kurulurken**. O ana kadar dokunma.
+
+<details>
+<summary>Elenen adaylar (2026-08-07 brainstorm'u, tarihsel)</summary>
+
+Gerekçe o zaman şuydu: "Nanas' Kitchens" 45 yaş civarı hedef kitleye eski/yaşlı
+hissettirebilir; yön olarak kültür vurgusu yerine "world" temalı bir isim düşünülüyordu.
+Adaylar: WorldBite (o dönemin favorisi), WorldBites, WorldKitchens, WorldTable, WorldPlate,
+WorldFare, OneWorldKitchen, WorldFeast, WorldPantry, WorldDish, WorldFork, WorldSupper,
+WorldCrave, WorldPlatter, PassportKitchen.
+
+</details>
+
+⚠️ Bu liste bu dosyayla birlikte `ctuka.github.io/NanasKitchens/CLAUDE.html` üzerinden
+yayınlandı; artık kullanılmayacak olsalar da yayınlanmış olan geri alınmaz.
 
 ## Test kullanıcı akışı (uçtan uca doğrulanmış)
 

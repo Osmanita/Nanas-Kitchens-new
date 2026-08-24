@@ -17,8 +17,9 @@
 import { createHash, randomBytes } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { Readable } from "node:stream";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { __tokenStoreSnapshotForTests, handleOAuth, setCors } from "./oauth.js";
+import { __flushStoreForTests, closeStore } from "./store.js";
 
 const BASE = "http://localhost:3002";
 const API = "http://localhost:8080";
@@ -160,7 +161,12 @@ function freezeClock(): (ms: number) => void {
   };
 }
 
-beforeEach(() => {
+beforeEach(async () => {
+  // State now outlives the process, so it also outlives a test run: without this the second
+  // run inherits the first run's rate-limit counters and the limit cases fail for a reason
+  // that has nothing to do with the code. MCP_REDIS_PREFIX (vitest.config.ts) keeps the wipe
+  // inside the suite's own namespace.
+  await __flushStoreForTests();
   platformRefresh = PLATFORM_REFRESH;
   rotations = 0;
   loginAccessToken = jwt(3600);
@@ -172,6 +178,10 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+});
+
+afterAll(async () => {
+  await closeStore();
 });
 
 // ─── Flow helpers ─────────────────────────────────────────────────────────────
@@ -363,7 +373,7 @@ describe("MCP refresh tokens at rest", () => {
     const { clientId, tokens } = await connect();
     const rotated = (await refreshWith(clientId, tokens.refresh_token)).res.json<Tokens>().refresh_token;
 
-    const { refreshIndexKeys, grantTokenHashes } = __tokenStoreSnapshotForTests();
+    const { refreshIndexKeys, grantTokenHashes } = await __tokenStoreSnapshotForTests();
     const stored = [...refreshIndexKeys, ...grantTokenHashes];
 
     // Every stored key is a digest — including the ones this suite's earlier cases left behind,
@@ -884,5 +894,100 @@ describe("expiry (these shift Date.now, so they run last)", () => {
 
     expect(res.statusCode).toBe(400);
     expect(callsTo("/auth/refresh")).toBe(0);
+  });
+});
+
+// ─── Two instances ────────────────────────────────────────────────────────────
+
+/**
+ * The reason the store moved to Redis. Every case above runs against one module instance and
+ * would have passed just as well when clients/codes/grants lived in module-level maps — that
+ * is exactly why the single-instance assumption survived so long.
+ *
+ * vi.resetModules() plus a fresh import gives a module registry entry with none of the first
+ * one's state: the stand-in for a second ECS task. Against the old maps every case here
+ * answers 400 because the second instance has simply never heard of any of it.
+ */
+describe("a second instance", () => {
+  async function freshInstance() {
+    vi.resetModules();
+    const mod = await import("./oauth.js");
+    return async (method: string, path: string, opts: RequestOptions = {}) => {
+      const res = new FakeRes();
+      setCors(res as unknown as ServerResponse);
+      const handled = await mod.handleOAuth(
+        makeReq(method, path, opts),
+        res as unknown as ServerResponse,
+        BASE,
+        API,
+      );
+      return { res, handled };
+    };
+  }
+
+  it("redeems an authorization code issued by the first one", async () => {
+    const { verifier, challenge } = pkce();
+    const clientId = await newClient();
+    const code = await authorizeToCode(clientId, challenge);
+
+    const requestB = await freshInstance();
+    const { res } = await requestB("POST", "/token", {
+      form: {
+        grant_type: "authorization_code",
+        code,
+        client_id: clientId,
+        redirect_uri: REDIRECT,
+        code_verifier: verifier,
+      },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json<Tokens>().refresh_token).toBeTruthy();
+  });
+
+  it("rotates a refresh token minted by the first one", async () => {
+    const { clientId, tokens } = await connect();
+
+    const requestB = await freshInstance();
+    const { res } = await requestB("POST", "/token", {
+      form: { grant_type: "refresh_token", refresh_token: tokens.refresh_token, client_id: clientId },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json<Tokens>().refresh_token).not.toBe(tokens.refresh_token);
+  });
+
+  it("sees a token rotated on the first one as reuse, and kills the family", async () => {
+    // The dangerous case. Rotation on A has to be visible to B, or a leaked token replayed
+    // against B looks perfectly live and the grant is never destroyed.
+    const { clientId, tokens } = await connect();
+    const rotated = await refreshWith(clientId, tokens.refresh_token);
+    expect(rotated.res.statusCode).toBe(200);
+    const live = rotated.res.json<Tokens>().refresh_token;
+
+    const requestB = await freshInstance();
+    const replay = await requestB("POST", "/token", {
+      form: { grant_type: "refresh_token", refresh_token: tokens.refresh_token, client_id: clientId },
+    });
+    expect(replay.res.statusCode).toBe(400);
+
+    // ...and the family is gone, so the token that WAS live no longer works on either.
+    const after = await refreshWith(clientId, live);
+    expect(after.res.statusCode).toBe(400);
+  });
+
+  // Weaker than the three above, and worth saying so: "revoked" and "never heard of it" both
+  // answer 400, so this case alone would also pass against a process-local store. It earns its
+  // place next to "rotates a refresh token minted by the first one", which establishes that B
+  // does see this token — together they mean the 400 here is the revocation, not ignorance.
+  it("honours a revocation performed on the first one", async () => {
+    const { clientId, tokens } = await connect();
+    expect((await revokeWith(clientId, tokens.refresh_token)).res.statusCode).toBe(200);
+
+    const requestB = await freshInstance();
+    const { res } = await requestB("POST", "/token", {
+      form: { grant_type: "refresh_token", refresh_token: tokens.refresh_token, client_id: clientId },
+    });
+    expect(res.statusCode).toBe(400);
   });
 });

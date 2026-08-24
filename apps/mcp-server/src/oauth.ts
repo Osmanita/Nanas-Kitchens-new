@@ -36,6 +36,7 @@
  */
 
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import * as store from "./store.js";
 import { IncomingMessage, ServerResponse } from "node:http";
 
 const CODE_TTL_MS = 5 * 60 * 1000;
@@ -58,8 +59,6 @@ const MAX_CLIENTS = 1_000;
 const MAX_CODES = 1_000;
 const MAX_GRANTS = 5_000;
 const MAX_FAMILY_TOKENS = 200;
-const MAX_RATE_KEYS = 10_000;
-const SWEEP_INTERVAL_MS = 60 * 1000;
 
 // Generous on purpose: these stop scripted credential stuffing and drive-by registration
 // floods, not a determined attacker (see clientIp — the key is spoofable behind a proxy).
@@ -92,19 +91,11 @@ interface Grant {
   clientId: string;
   platformRefreshToken: string;
   expiresAt: number;
-  tokenHashes: string[];
 }
 
-interface RefreshRef {
-  grantId: string;
-  consumed: boolean;
-}
-
-const clients = new Map<string, RegisteredClient>();
-const codes = new Map<string, PendingCode>();
-const grants = new Map<string, Grant>();
-const refreshIdx = new Map<string, RefreshRef>();
-const rateBuckets = new Map<string, { count: number; resetAt: number }>();
+// State lives in Redis (src/store.ts), not in this process. See that file for why: with two
+// tasks, module-level maps mean a client registered on A is unknown to B, and a refresh token
+// rotated on A still looks live on B — so reuse detection never fires and the family survives.
 
 const b64url = (buf: Buffer) => buf.toString("base64url");
 const s256 = (verifier: string) => b64url(createHash("sha256").update(verifier).digest());
@@ -120,24 +111,10 @@ function safeEqual(a: string, b: string): boolean {
 
 // ─── Grant bookkeeping ────────────────────────────────────────────────────────
 
-function destroyGrant(grantId: string): void {
-  const grant = grants.get(grantId);
-  if (grant) for (const hash of grant.tokenHashes) refreshIdx.delete(hash);
-  grants.delete(grantId);
-}
-
 /** Mints an opaque MCP refresh token and indexes it by hash under an existing grant. */
-function mintRefreshToken(grantId: string, grant: Grant): string {
+async function mintRefreshToken(grantId: string, grant: Grant, now: number): Promise<string> {
   const token = b64url(randomBytes(32));
-  const hash = sha256hex(token);
-  grant.tokenHashes.push(hash);
-  // A long-forgotten rotation is dropped rather than remembered forever; replaying it then
-  // reads as an unknown token instead of as reuse, which still fails the exchange.
-  while (grant.tokenHashes.length > MAX_FAMILY_TOKENS) {
-    const stale = grant.tokenHashes.shift();
-    if (stale) refreshIdx.delete(stale);
-  }
-  refreshIdx.set(hash, { grantId, consumed: false });
+  await store.indexRefreshToken(grantId, sha256hex(token), grant.expiresAt, now, MAX_FAMILY_TOKENS);
   return token;
 }
 
@@ -148,35 +125,20 @@ function mintRefreshToken(grantId: string, grant: Grant): string {
  * A read-only copy of the keys is the only way a black-box test can see that. Returns a
  * snapshot, never the maps themselves, and never the platform token they point at.
  */
-export function __tokenStoreSnapshotForTests(): { refreshIndexKeys: string[]; grantTokenHashes: string[] } {
+export async function __tokenStoreSnapshotForTests(): Promise<{
+  refreshIndexKeys: string[];
+  grantTokenHashes: string[];
+}> {
   return {
-    refreshIndexKeys: [...refreshIdx.keys()],
-    grantTokenHashes: [...grants.values()].flatMap((grant) => [...grant.tokenHashes]),
+    refreshIndexKeys: await store.__refreshIndexKeysForTests(),
+    grantTokenHashes: await store.__grantTokenHashesForTests(),
   };
 }
 
-let lastSweepAt = 0;
-
-function sweep(now: number, force = false): void {
-  if (!force && now - lastSweepAt < SWEEP_INTERVAL_MS) return;
-  lastSweepAt = now;
-
-  for (const [code, pending] of codes) if (pending.expiresAt <= now) codes.delete(code);
-  for (const [grantId, grant] of grants) if (grant.expiresAt <= now) destroyGrant(grantId);
-
-  const droppedClients = new Set<string>();
-  for (const [clientId, client] of clients) {
-    if (client.expiresAt <= now) {
-      clients.delete(clientId);
-      droppedClients.add(clientId);
-    }
-  }
-  if (droppedClients.size > 0) {
-    for (const [grantId, grant] of grants) if (droppedClients.has(grant.clientId)) destroyGrant(grantId);
-  }
-
-  for (const [key, bucket] of rateBuckets) if (bucket.resetAt <= now) rateBuckets.delete(key);
-}
+// sweep() is gone. Every key written to the store carries a TTL, so expiry is the database's
+// job now rather than a lazy pass this process has to remember to run — which also removes the
+// window the old one had: it self-throttled to once a minute, so a flood arriving faster than
+// that had the maps to itself in between. Expiry is still re-checked inline at every use.
 
 /**
  * Which X-Forwarded-For element to trust. A proxy APPENDS the peer address it actually saw, so
@@ -206,22 +168,14 @@ function clientIp(req: IncomingMessage): string {
   return (hop || socketIp).slice(0, 64);
 }
 
-function rateLimited(key: string, limit: { max: number; windowMs: number }, now: number): boolean {
-  const bucket = rateBuckets.get(key);
-  if (bucket && bucket.resetAt > now) {
-    bucket.count += 1;
-    return bucket.count > limit.max;
-  }
-  // Bound at insertion, not in sweep(): sweep self-throttles to once a minute, so a flood that
-  // arrives faster than that would have the map to itself in between. Map iteration order is
-  // insertion order, so evicting from the front drops the oldest keys.
-  while (rateBuckets.size >= MAX_RATE_KEYS) {
-    const oldest = rateBuckets.keys().next().value;
-    if (oldest === undefined) break;
-    rateBuckets.delete(oldest);
-  }
-  rateBuckets.set(key, { count: 1, resetAt: now + limit.windowMs });
-  return false;
+/**
+ * One shared counter per key instead of one per process — which matters, because a per-process
+ * limit divided by N tasks is really a limit of N times max, and the whole point of the ALB in
+ * front is that consecutive attempts land on different tasks. MAX_RATE_KEYS is gone with the
+ * map it bounded: keys expire on their own now, so there is no unbounded set to evict from.
+ */
+async function rateLimited(key: string, limit: { max: number; windowMs: number }): Promise<boolean> {
+  return (await store.bumpRate(key, limit.windowMs)) > limit.max;
 }
 
 // ─── Small HTTP helpers ───────────────────────────────────────────────────────
@@ -418,7 +372,6 @@ async function route(
 ): Promise<boolean> {
   const url = new URL(req.url ?? "/", baseUrl);
   const now = Date.now();
-  sweep(now);
 
   // RFC 8414 §3.1 allows the issuer path as a suffix; the old startsWith also answered on
   // /.well-known/oauth-authorization-serverANYTHING and on every path below it.
@@ -462,7 +415,7 @@ async function route(
         return true;
       }
     }
-    if (rateLimited(`register:${clientIp(req)}`, REGISTER_RATE, now)) {
+    if (await rateLimited(`register:${clientIp(req)}`, REGISTER_RATE)) {
       json(res, 429, { error: "invalid_request", error_description: "Too many registrations" });
       return true;
     }
@@ -501,18 +454,12 @@ async function route(
       return true;
     }
 
-    if (clients.size >= MAX_CLIENTS) {
-      sweep(now, true);
-      // Still full means the map is full of entries that have not expired yet, and answering
-      // 503 would keep every legitimate client out until they do. Evict the oldest instead:
-      // a flood then costs the attacker its own earlier registrations, not everyone else's
-      // ability to onboard. Insertion order makes the front of the map the oldest.
-      while (clients.size >= MAX_CLIENTS) {
-        const oldest = clients.keys().next().value;
-        if (oldest === undefined) break;
-        clients.delete(oldest);
-        for (const [grantId, grant] of grants) if (grant.clientId === oldest) destroyGrant(grantId);
-      }
+    // Registrations expire on their own (an unused one lives an hour), so the cap is a ceiling
+    // on how fast they can be created, not a queue to evict from. Full means a flood is in
+    // progress: 503 and let the TTLs drain it, rather than deleting other people's clients.
+    if (!(await store.underCap("clients", MAX_CLIENTS))) {
+      json(res, 503, { error: "temporarily_unavailable" });
+      return true;
     }
     const client: RegisteredClient = {
       clientId: randomBytes(16).toString("hex"),
@@ -522,7 +469,8 @@ async function route(
       // the first successful code redemption promote it to the full client lifetime.
       expiresAt: now + UNUSED_CLIENT_TTL_MS,
     };
-    clients.set(client.clientId, client);
+    await store.putClient(client.clientId, client, client.expiresAt, now);
+    await store.bumpCount("clients");
     json(res, 201, {
       client_id: client.clientId,
       client_name: client.clientName,
@@ -535,7 +483,7 @@ async function route(
   }
 
   if (url.pathname === "/authorize" && req.method === "GET") {
-    const client = clients.get(url.searchParams.get("client_id") ?? "");
+    const client = await store.getClient<RegisteredClient>(url.searchParams.get("client_id") ?? "");
     const redirectUri = url.searchParams.get("redirect_uri") ?? "";
     if (!client || !client.redirectUris.includes(redirectUri)) {
       html(res, 400, "<p>Unknown client or redirect_uri — register first.</p>");
@@ -551,7 +499,7 @@ async function route(
 
   if (url.pathname === "/authorize" && req.method === "POST") {
     const form = new URLSearchParams(await readBody(req));
-    const client = clients.get(form.get("client_id") ?? "");
+    const client = await store.getClient<RegisteredClient>(form.get("client_id") ?? "");
     const redirectUri = form.get("redirect_uri") ?? "";
     if (!client || !client.redirectUris.includes(redirectUri)) {
       html(res, 400, "<p>Unknown client or redirect_uri.</p>");
@@ -565,7 +513,7 @@ async function route(
     }
     // This endpoint forwards arbitrary credentials to a platform that has no lockout of its
     // own — unthrottled it is a public brute-force front end for every account on it.
-    if (rateLimited(`login:${clientIp(req)}`, LOGIN_RATE, now)) {
+    if (await rateLimited(`login:${clientIp(req)}`, LOGIN_RATE)) {
       html(res, 429, loginForm(form, client.clientName, "Too many attempts — wait a few minutes."));
       return true;
     }
@@ -586,22 +534,21 @@ async function route(
       return true;
     }
 
-    if (codes.size >= MAX_CODES) {
-      sweep(now, true);
-      if (codes.size >= MAX_CODES) {
-        html(res, 503, "<p>Too many authorizations in flight — try again in a few minutes.</p>");
-        return true;
-      }
+    if (!(await store.underCap("codes", MAX_CODES))) {
+      html(res, 503, "<p>Too many authorizations in flight — try again in a few minutes.</p>");
+      return true;
     }
     const code = randomBytes(24).toString("base64url");
-    codes.set(code, {
+    const pendingCode: PendingCode = {
       clientId: client.clientId,
       redirectUri,
       codeChallenge: form.get("code_challenge") ?? "",
       accessToken: tokens.accessToken,
       refreshToken: tokens.refreshToken,
       expiresAt: now + CODE_TTL_MS,
-    });
+    };
+    await store.putCode(code, pendingCode, pendingCode.expiresAt, now);
+    await store.bumpCount("codes");
     const target = new URL(redirectUri);
     target.searchParams.set("code", code);
     const state = form.get("state");
@@ -617,14 +564,15 @@ async function route(
 
     if (grantType === "authorization_code") {
       const presentedCode = form.get("code") ?? "";
-      const pending = codes.get(presentedCode);
-      codes.delete(presentedCode); // single use, success or not
+      // Atomic take, not get-then-delete: two exchanges arriving together would otherwise both
+      // read the same live code and both redeem it. Single use, success or not.
+      const pending = await store.takeCode<PendingCode>(presentedCode);
       const clientId = form.get("client_id") ?? "";
       if (
         !pending ||
         pending.expiresAt < now ||
         !safeEqual(pending.clientId, clientId) ||
-        !clients.has(clientId) ||
+        !(await store.getClient<RegisteredClient>(clientId)) ||
         (form.get("redirect_uri") ?? "") !== pending.redirectUri ||
         !safeEqual(s256(form.get("code_verifier") ?? ""), pending.codeChallenge)
       ) {
@@ -632,30 +580,26 @@ async function route(
         return true;
       }
 
-      if (grants.size >= MAX_GRANTS) {
-        sweep(now, true);
-        // Same reasoning as the client cap: 30-day grants mean "still full after a sweep" is
-        // the normal case under a flood, and 503 here would lock every real buyer out of the
-        // code exchange for a month. Drop the oldest authorization instead.
-        while (grants.size >= MAX_GRANTS) {
-          const oldest = grants.keys().next().value;
-          if (oldest === undefined) break;
-          destroyGrant(oldest);
-        }
+      if (!(await store.underCap("grants", MAX_GRANTS))) {
+        json(res, 503, { error: "temporarily_unavailable" });
+        return true;
       }
       // This client got as far as a real login, so it is worth the full retention window.
-      const client = clients.get(clientId);
-      if (client) client.expiresAt = now + CLIENT_TTL_MS;
+      const client = await store.getClient<RegisteredClient>(clientId);
+      if (client) {
+        client.expiresAt = now + CLIENT_TTL_MS;
+        await store.putClient(clientId, client, client.expiresAt, now);
+      }
       // The platform refresh token stops here; the client only ever sees the opaque MCP one.
       const grantId = randomBytes(16).toString("hex");
       const grant: Grant = {
         clientId: pending.clientId,
         platformRefreshToken: pending.refreshToken,
         expiresAt: now + GRANT_TTL_MS,
-        tokenHashes: [],
       };
-      grants.set(grantId, grant);
-      const refreshToken = mintRefreshToken(grantId, grant);
+      await store.putGrant(grantId, grant, grant.expiresAt, now);
+      await store.bumpCount("grants");
+      const refreshToken = await mintRefreshToken(grantId, grant, now);
 
       json(res, 200, {
         access_token: pending.accessToken,
@@ -669,7 +613,11 @@ async function route(
     if (grantType === "refresh_token") {
       const presented = form.get("refresh_token") ?? "";
       const clientId = form.get("client_id") ?? "";
-      const ref = presented ? refreshIdx.get(sha256hex(presented)) : undefined;
+      // Read without consuming first. The checks below must be able to reject a request
+      // WITHOUT spending the token — a wrong client_id is a misconfiguration, and burning the
+      // token there would break the legitimate client that owns it.
+      const hash = presented ? sha256hex(presented) : "";
+      const ref = presented ? await store.peekRefreshToken(hash) : undefined;
       if (!ref) {
         json(res, 400, { error: "invalid_grant" });
         return true;
@@ -677,33 +625,35 @@ async function route(
       if (ref.consumed) {
         // Rotation is single-use, so a second presentation means a copy of this token exists
         // somewhere it should not. Kill the family, and the platform token inside it.
-        destroyGrant(ref.grantId);
+        await store.destroyGrant(ref.grantId);
         json(res, 400, { error: "invalid_grant" });
         return true;
       }
-      const grant = grants.get(ref.grantId);
+      const grant = await store.getGrant<Grant>(ref.grantId);
       if (!grant || grant.expiresAt < now) {
-        destroyGrant(ref.grantId);
+        await store.destroyGrant(ref.grantId);
         json(res, 400, { error: "invalid_grant" });
         return true;
       }
       // OAuth 2.1 §4.3.1: a refresh token is bound to the client it was issued to. Not treated
       // as reuse — a wrong client_id is far more often a misconfigured client than an attack,
       // and the token itself is the secret that gates the platform call below.
-      const client = clients.get(clientId);
+      const client = await store.getClient<RegisteredClient>(clientId);
       if (!client || !safeEqual(grant.clientId, clientId)) {
         json(res, 400, { error: "invalid_grant" });
         return true;
       }
 
-      // Burn the token HERE, in the synchronous block, not after the await below. Two
-      // presentations that overlap in flight would otherwise both pass the checks above and
-      // both spend the same platform refresh token: either the platform rejects the second and
-      // the grant is destroyed under a client that merely retried, or both succeed and the
-      // grant ends up with two live unconsumed tokens — one of them the thief's — after which
-      // no already-rotated token is ever presented again and the reuse detection above can
-      // never fire. The authorization_code branch already consumes before its first await.
-      ref.consumed = true;
+      // Burn it HERE: after every check that may legitimately reject, and before the platform
+      // call below. One atomic Redis script, so of two presentations that overlap in flight
+      // exactly one gets "ok" — including when they land on different tasks. The loser reads
+      // as reuse, which is the same answer the single-process version gave.
+      const burn = await store.consumeRefreshToken(hash);
+      if (burn.outcome !== "ok") {
+        if (burn.outcome === "reuse") await store.destroyGrant(ref.grantId);
+        json(res, 400, { error: "invalid_grant" });
+        return true;
+      }
       const platformRefreshToken = grant.platformRefreshToken;
 
       const refresh = await fetch(`${apiUrl}/auth/refresh`, {
@@ -713,8 +663,8 @@ async function route(
       }).catch(() => null);
       if (!refresh || !refresh.ok) {
         // The stored credential is dead (rotated elsewhere, revoked, expired); keeping the
-        // grant would only leave an unusable platform token sitting in memory.
-        destroyGrant(ref.grantId);
+        // grant would only leave an unusable platform token sitting in the store.
+        await store.destroyGrant(ref.grantId);
         json(res, 400, { error: "invalid_grant" });
         return true;
       }
@@ -722,7 +672,7 @@ async function route(
       if (!tokens) {
         // The platform rotated its side but we cannot read the new credential, so the one we
         // hold is already dead. Drop the grant rather than leave a burnt token pointing at it.
-        destroyGrant(ref.grantId);
+        await store.destroyGrant(ref.grantId);
         json(res, 502, { error: "server_error" });
         return true;
       }
@@ -730,7 +680,9 @@ async function route(
       grant.platformRefreshToken = tokens.refreshToken;
       grant.expiresAt = now + GRANT_TTL_MS;
       client.expiresAt = now + CLIENT_TTL_MS;
-      const rotated = mintRefreshToken(ref.grantId, grant);
+      await store.putGrant(ref.grantId, grant, grant.expiresAt, now);
+      await store.putClient(clientId, client, client.expiresAt, now);
+      const rotated = await mintRefreshToken(ref.grantId, grant, now);
 
       json(res, 200, {
         access_token: tokens.accessToken,
@@ -750,9 +702,12 @@ async function route(
   if (url.pathname === "/revoke" && req.method === "POST") {
     const form = new URLSearchParams(await readBody(req));
     const presented = form.get("token") ?? "";
-    const ref = presented ? refreshIdx.get(sha256hex(presented)) : undefined;
-    const grant = ref ? grants.get(ref.grantId) : undefined;
-    if (ref && grant && safeEqual(grant.clientId, form.get("client_id") ?? "")) destroyGrant(ref.grantId);
+    // peek, not consume: revoking a token must not mark it used and so must not read as reuse.
+    const ref = presented ? await store.peekRefreshToken(sha256hex(presented)) : undefined;
+    const grant = ref ? await store.getGrant<Grant>(ref.grantId) : undefined;
+    if (ref && grant && safeEqual(grant.clientId, form.get("client_id") ?? "")) {
+      await store.destroyGrant(ref.grantId);
+    }
     json(res, 200, {});
     return true;
   }
