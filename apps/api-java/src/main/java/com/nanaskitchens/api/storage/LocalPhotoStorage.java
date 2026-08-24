@@ -4,8 +4,6 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Map;
-import java.util.UUID;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
@@ -14,13 +12,6 @@ import org.springframework.stereotype.Component;
 @Component
 @ConditionalOnProperty(name = "app.storage.provider", havingValue = "local", matchIfMissing = true)
 public class LocalPhotoStorage implements PhotoStorage {
-
-    /** All storable types; endpoints narrow this (photos: images only, reports: + pdf). */
-    public static final Map<String, String> EXTENSIONS = Map.of(
-            "image/jpeg", "jpg",
-            "image/png", "png",
-            "image/webp", "webp",
-            "application/pdf", "pdf");
 
     private final Path dir;
     private final String publicBaseUrl;
@@ -39,7 +30,7 @@ public class LocalPhotoStorage implements PhotoStorage {
 
     @Override
     public String store(byte[] bytes, String contentType) {
-        String name = UUID.randomUUID() + "." + EXTENSIONS.get(contentType);
+        String name = PhotoStorage.newName(contentType);
         try {
             Files.write(dir.resolve(name), bytes);
         } catch (IOException e) {

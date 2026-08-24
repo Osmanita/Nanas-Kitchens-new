@@ -83,6 +83,20 @@ jobs:
           distribution: temurin
           java-version: 21
           cache: maven
+      # MinIO gives S3PhotoStorageIntegrationTest a real S3 API to check the storage provider
+      # against. Not a service container: the minio image needs a `server /data` argument and
+      # service containers have no way to pass one. Without TEST_S3_ENDPOINT those tests skip
+      # themselves - loudly, as skipped, never as passed - so this step is what makes them run.
+      - name: Start MinIO
+        run: |
+          docker run -d --name minio -p 9000:9000             -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin             minio/minio:latest server /data
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:9000/minio/health/live > /dev/null; then
+              echo "MinIO is up"; exit 0
+            fi
+            sleep 2
+          done
+          echo "MinIO never became healthy"; docker logs minio; exit 1
       # mvnw is stored with LF and mode 100755, so it runs as-is on a Linux runner.
       # The whole suite runs now, *IntegrationTest included: IntegrationTest prefers
       # TEST_DATABASE_URL over Testcontainers, so it uses the service container above and
@@ -94,4 +108,5 @@ jobs:
           TEST_DATABASE_URL: jdbc:postgresql://localhost:5432/nanas_test
           TEST_DATABASE_USER: culture
           TEST_DATABASE_PASSWORD: culture
+          TEST_S3_ENDPOINT: http://localhost:9000
         run: ./mvnw -B test

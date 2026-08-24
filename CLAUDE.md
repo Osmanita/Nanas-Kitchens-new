@@ -708,11 +708,56 @@ adımı kondu. tsconfig ilk koşuşunda ölü satırın **tip hatası da** oldu�
 ⚠️ **`ADDRESS_ENC_KEY` kasten dokunulmadı** — döndürmek mevcut şifreli adresleri kalıcı
 olarak okunamaz yapar. Doğru an, ECS'e geçerken yeni DB kurulduğunda.
 
-**Hâlâ ECS'e engel (güncel):** `E4` fotoğraflar yerel diske yazılıyor (S3 impl'i yok —
-**sıradaki iş**); `E5` MCP OAuth store'u hâlâ in-memory (Redis bağlı olduğu için artık
-küçük bir iş); `E2` migration job'ının **altyapı** tarafı (ECS RunTask + deploy adımı);
-`E3` domain gelince web imajının yeniden build edilmesi; `E11` geocoding hâlâ sipariş
-yolunda ve istek thread'inde blokluyor (cache eklendi ama asıl sorun duruyor).
+**Hâlâ ECS'e engel (güncel):** `E5` MCP OAuth store'u hâlâ in-memory (Redis bağlı olduğu
+için artık küçük bir iş); `E2` migration job'ının **altyapı** tarafı (ECS RunTask + deploy
+adımı); `E3` domain gelince web imajının yeniden build edilmesi; `E11` geocoding hâlâ
+sipariş yolunda ve istek thread'inde blokluyor (cache eklendi ama asıl sorun duruyor).
+
+### 9. tur — S3 storage (2026-08-24)
+
+`E4` kapandı: `S3PhotoStorage` + `S3FilesController`, `STORAGE_PROVIDER=s3` ile devreye
+giriyor. Fargate'te disk task'a özel ve efemer — A'ya yüklenen fotoğrafı B göremez, her
+deploy'da hepsi silinir; bu, ikinci task'tan önce var olması gereken şeydi.
+
+⚠️ **Buradaki asıl tasarım kararı: `store()` presigned URL DÖNMÜYOR.** Dönen URL veritabanına
+yazılıyor (`Kitchen.photo`, `Dish.photo`, sağlık raporu linki). Presigned URL'in son kullanma
+tarihi var; satıra yazılmış bir presigned URL testte çalışır, bir hafta sonra 404 olur.
+Bu yüzden her iki sağlayıcı da **aynı kalıcı URL şeklini** döndürüyor —
+`{public-base-url}/files/{name}` — ve **imzalama okuma anında**, controller'da yapılıyor:
+
+- `GET /files/{name}` → kısa ömürlü presigned URL'e **302**. Bucket private kalıyor (yanlış
+  ayarlanacak public-read policy yok), uygulama her görüntü baytının yolunda oturmuyor, ve
+  son kullanma tarihi olan hiçbir şey kalıcılaşmıyor.
+- İki controller da `@ConditionalOnProperty` ile, aynı anda tam olarak biri aktif. Yani
+  fotoğraf yüklendiğinde DB'ye yazılan URL, sağlayıcı değişince de çalışmaya devam ediyor.
+- `Cache-Control: private, max-age=300` — imzanın ömründen **kısa**. Kendi hedefinden uzun
+  yaşayan bir cache'lenmiş redirect, kırık bir görsel demek.
+
+**Diğer notlar:**
+
+- `EXTENSIONS` tablosu `LocalPhotoStorage`'dan `PhotoStorage` arayüzüne taşındı. Yükleme
+  yolundaki tip kontrolü hangi sağlayıcının kurulu olduğunu bilmiyor; `provider=s3` iken
+  o statik tablo hiç örneklenmeyen bir sınıfın üzerinde duruyordu.
+- Kimlik bilgileri **default credentials chain**'den geliyor (dağıtımda ECS task role, yani
+  hiçbir yerde anahtar yok). Açık access-key sadece yerel MinIO'yu göstermek için.
+- Endpoint set edilince **path-style addressing** açılıyor: MinIO virtual-host bucket
+  yapmıyor ve `bucket.localhost` hiçbir yere çözülmüyor.
+- pom'a `s3` + `url-connection-client` eklendi, netty/apache client'ları exclude edildi —
+  jar zaten 138 MB, tüm AWS SDK bundle'ı gereksiz. İmaj 681 MB → 697 MB.
+
+**Doğrulama:** `S3PhotoStorageIntegrationTest` **gerçek bir S3 API'sine** (MinIO) karşı
+koşuyor — path-style, imzanın gerçekten doğrulanması ve nesnenin sahiden orada olması bir
+mock'un fikir sahibi olamayacağı şeyler. Mutasyon kontrolü: `store()`'u presigned URL
+döndürecek şekilde bozmak 2 testi, isim guard'ını kaldırmak 1 testi kırmızıya çevirdi.
+Test `TEST_S3_ENDPOINT` ile kapılı ve yokken **görünür biçimde skip** oluyor (sessizce
+geçmiyor); CI'da MinIO bir `docker run` adımıyla kaldırılıyor — service container olamıyor
+çünkü minio imajı `server /data` argümanı istiyor ve service container'ların arg geçme yolu
+yok. Yerelde: `docker compose --profile s3 up -d`.
+
+⚠️ **Bunun KANITLAMADIĞI şey: gerçek AWS S3'te çalıştığı.** AWS hesabı hâlâ yok. MinIO
+API-uyumlu ve bu, kablolamayı kapsıyor; IAM, bucket policy ve region davranışı test edilmedi.
+
+Java testleri 39 → 42.
 
 ## İsim / domain brainstorm (2026-08-07)
 

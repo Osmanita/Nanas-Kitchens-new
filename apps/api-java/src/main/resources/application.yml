@@ -121,11 +121,25 @@ app:
       url: ${NOTIFICATIONS_WEBHOOK_URL:}
       secret: ${NOTIFICATIONS_WEBHOOK_SECRET:}
   storage:
-    # local | s3 (Story 1.3 AC2) — local disk + /files/{name} until S3 credentials exist;
-    # the S3 impl will return signed URLs behind the same PhotoStorage interface.
+    # local | s3 (Story 1.3 AC2). Both serve GET /files/{name} and both return that same URL
+    # shape from store() — the URL goes into the database, so it must not depend on which
+    # provider wrote it, and must not carry an expiry. On Fargate 'local' means the photo
+    # lives on one task's ephemeral disk: use s3 anywhere more than one task runs.
     provider: ${STORAGE_PROVIDER:local}
     local-dir: ${UPLOADS_DIR:uploads}
     public-base-url: ${PUBLIC_BASE_URL:http://localhost:8080}
+    s3:
+      bucket: ${S3_BUCKET:}
+      region: ${AWS_REGION:us-east-2}
+      # Set for MinIO/LocalStack (also switches on path-style addressing); empty = real AWS.
+      endpoint: ${S3_ENDPOINT:}
+      # Leave empty in the deployed setup: the ECS task role is picked up by the default
+      # credentials chain, so no key material exists to leak.
+      access-key: ${S3_ACCESS_KEY:}
+      secret-key: ${S3_SECRET_KEY:}
+      key-prefix: ${S3_KEY_PREFIX:photos/}
+      # Lifetime of the presigned URL the redirect points at, NOT of the stored URL.
+      signed-url-ttl-minutes: ${S3_SIGNED_URL_TTL_MINUTES:60}
   geocoding:
     # OpenStreetMap Nominatim (Story 1.3 AC1); on failure the UI falls back to manual
     # lat/lng entry (AC4). Point base-url at a mock in tests.

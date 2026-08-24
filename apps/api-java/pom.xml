@@ -23,6 +23,7 @@
     <jjwt.version>0.13.0</jjwt.version>
     <stripe.version>29.5.0</stripe.version>
     <testcontainers.version>1.20.4</testcontainers.version>
+    <aws.sdk.version>2.32.14</aws.sdk.version>
   </properties>
 
   <dependencyManagement>
@@ -64,6 +65,29 @@
     <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-mail</artifactId>
+    </dependency>
+    <!-- S3 only, not the whole AWS SDK: the bundle is ~200 MB of service clients we will
+         never call, and the api-java jar is already 138 MB. url-connection-client replaces
+         the default Netty HTTP client for the same reason. -->
+    <dependency>
+      <groupId>software.amazon.awssdk</groupId>
+      <artifactId>s3</artifactId>
+      <version>${aws.sdk.version}</version>
+      <exclusions>
+        <exclusion>
+          <groupId>software.amazon.awssdk</groupId>
+          <artifactId>netty-nio-client</artifactId>
+        </exclusion>
+        <exclusion>
+          <groupId>software.amazon.awssdk</groupId>
+          <artifactId>apache-client</artifactId>
+        </exclusion>
+      </exclusions>
+    </dependency>
+    <dependency>
+      <groupId>software.amazon.awssdk</groupId>
+      <artifactId>url-connection-client</artifactId>
+      <version>${aws.sdk.version}</version>
     </dependency>
     <dependency>
       <groupId>org.springframework.boot</groupId>

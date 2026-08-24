@@ -2,7 +2,6 @@ package com.nanaskitchens.api.kitchens;
 
 import com.nanaskitchens.api.audit.AuditLog;
 import com.nanaskitchens.api.audit.AuditLogRepository;
-import com.nanaskitchens.api.storage.LocalPhotoStorage;
 import com.nanaskitchens.api.storage.PhotoStorage;
 import java.io.IOException;
 import java.util.LinkedHashMap;
@@ -74,7 +73,7 @@ public class HealthReportsController {
             throws IOException {
         requireOwnedKitchen(auth.getName(), kitchenId);
         String contentType = file.getContentType();
-        if (contentType == null || !LocalPhotoStorage.EXTENSIONS.containsKey(contentType)) {
+        if (contentType == null || !PhotoStorage.EXTENSIONS.containsKey(contentType)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "UNSUPPORTED_DOCUMENT_TYPE");
         }
         if (file.getSize() == 0 || file.getSize() > MAX_REPORT_BYTES) {
