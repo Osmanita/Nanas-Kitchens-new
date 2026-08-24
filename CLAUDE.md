@@ -42,9 +42,14 @@ Demo pazaryeri artık **Powell, Ohio (43065)** merkezli (bkz. Seed verisi).
   takip), `/seller/*`, `/settings/notifications`, `/admin`, `/inspector/*`.
 - **`apps/api`** — eski NestJS API (:3001). Prisma şemasının/migration'ların sahibi;
   menu CRUD ve kalan hikayeler taşınana kadar duruyor. Seed buradan çalışır.
+  **Orders modülü 2026-08-24'te SİLİNDİ** — kimse çağırmıyordu ama paylaşılan JWT
+  secret'ıyla ağ içinden çalışıyordu ve migration öncesi halindeydi (çift iade, kilitsiz
+  stok iadesi, hiç validation yok). Ayrıntı: "8. tur". Artık kendi `.env`'ini de okuyor
+  (`src/env.ts`), yani `dev.cmd` dışından başlatmak da çalışır.
 - **`apps/mcp-server`** — MCP sunucusu (:3002).
 - PostGIS + Redis: `docker compose up -d`. (compose SADECE bu ikisini kaldırır, uygulamaları
-  değil.)
+  değil.) **Redis artık opsiyonel değil** — Java API onsuz açılmıyor: canlı porsiyon
+  yayını (`portions:{kitchenId}` pub/sub) ve kurye quote'ları oradan geçiyor ("8. tur").
 - Dört uygulamanın da kendi `Dockerfile`'ı var, artı `apps/api/Dockerfile.migrate` (tek
   seferlik `prisma migrate deploy` job'ı). **Hepsinin build context'i repo köküdür.**
   Ayrıntı ve tuzaklar için "7. tur"a bak.
@@ -288,11 +293,13 @@ rollover job'ın işi DEĞİL (o sadece "hiç menüsü olmayan" günleri dolduru
   çalışamazdı (aşağıya bak). **2026-08-12'de CI'da da doğrulandı** — `java` job'ı postgis
   service container'ıyla `Tests run: 29, Failures: 0, Errors: 0` + `BUILD SUCCESS` verdi
   (`OrdersServiceIntegrationTest`, `OrdersServiceDeliveryAddressIntegrationTest`,
-  `KitchensServiceSearchIntegrationTest` dahil). Yerelde Docker izni olmadığı için artık
-  **CI bu testlerin tek gerçek koşum yeri** — yerelde çalıştıramıyorsan CI'ya bak, tahmin etme.
-- **Nasıl çalıştırılır (bu makinede):** `IntegrationTest` artık iki yoldan veritabanı bulur:
+  `KitchensServiceSearchIntegrationTest` dahil). **2026-08-24'te suite 39 teste çıktı** ve
+  Docker artık bu makinede de çalıştığı için **yerelde de koşuyor** — CI tek koşum yeri
+  değil. `java` job'ında artık postgis'in yanında bir **redis** service container'ı da var:
+  Spring context Redis olmadan ayağa kalkmıyor.
+- **Nasıl çalıştırılır (bu makinede):** `IntegrationTest` iki yoldan veritabanı bulur:
   `TEST_DATABASE_URL` doluysa hazır bir Postgres+PostGIS, boşsa Testcontainers. Testcontainers
-  bu makinede HÂLÂ çalışmıyor (docker-java Docker Desktop'ın pipe'larını göremiyor), o yüzden:
+  bu makinede hâlâ denenmedi, hazır DB yolu çalışıyor ve hızlı:
   ```powershell
   docker compose up -d
   # bir kereye mahsus: docker compose exec -T db psql -U culture -d postgres -c "CREATE DATABASE nanas_test"
@@ -314,8 +321,18 @@ rollover job'ın işi DEĞİL (o sadece "hiç menüsü olmayan" günleri dolduru
   çözmeye çalıştığı için `ADDRESS_DECRYPT_FAILED` ile patlıyordu.
 - Kapsam: `OrdersServiceIntegrationTest`, `KitchensServiceSearchIntegrationTest`,
   `OrdersServiceCancelIntegrationTest`, `EarningsPayoutIntegrationTest`,
-  `OrdersServiceDeliveryAddressIntegrationTest`. Son üçü mutasyon testinden geçirildi (hata
-  kasten geri konup kırmızı oldukları görüldü) — yani gerçekten davranışı tutuyorlar.
+  `OrdersServiceDeliveryAddressIntegrationTest`,
+  `OrdersServiceDeliveryAddressReadbackIntegrationTest`,
+  `PortionsStreamRedisIntegrationTest`, `MockDeliveryQuoteRedisIntegrationTest`.
+  Hepsi mutasyon testinden geçirildi (hata kasten geri konup kırmızı oldukları görüldü) —
+  yani gerçekten davranışı tutuyorlar.
+- **`apps/web` tarafında da 25 test var** (16'ydı): `lib/api.test.ts` eşzamanlı refresh
+  yarışını, `lib/reviewWindow.test.ts` ay sonu taşmasını pinliyor. ⚠️ `api.test.ts`'te ısıran
+  assertion **çağrı sayısı** (`/auth/refresh` bir kez) — iki istek de bozuk halde 200
+  döndüğü için status'lere bakan bir test bu hatayı hiç görmez.
+- ⚠️ **`mvnw spring-boot:run` forked bir JVM açar ve kabuğu öldürmek onu öldürmez.** Portta
+  eski bir sürüm kalabilir; iki instance testinde tam bunu yaşadım ve yanlış bir "çalışmıyor"
+  sonucu aldım. Önce `Get-NetTCPConnection -State Listen -LocalPort 8080` ile bak.
 
 ## Bilinen eksikler / sıradaki adaylar
 
@@ -332,22 +349,26 @@ rollover job'ın işi DEĞİL (o sadece "hiç menüsü olmayan" günleri dolduru
 - Gerçek ödeme (Stripe Connect satıcı ödemeleri), gerçek DoorDash/Grubhub, gerçek
   push/email bildirim kanalları (FCM/SES) — hepsi mock.
 - `apps/api` (NestJS) tarafında hiç test yok (artık "referans", web sadece Java API'ye
-  konuşuyor). `apps/mcp-server`'ın OAuth'u artık test altında, MCP tool'ları değil.
+  konuşuyor; orders modülü 2026-08-24'te silindi). `apps/mcp-server`'ın OAuth'u artık test
+  altında, MCP tool'ları değil.
 - Bağımsız bir buyer hesap/profil sayfası yok (telefon `/settings/notifications`'ta,
   ama genel "hesabım" sayfası yok).
 - CI (GitHub Actions): pnpm sürümü package.json `packageManager`'dan gelir — workflow'a
   `version:` EKLEME (çift tanım hatası verir).
 - Kaloriler temsili dev verisi; Nominatim dev geocoder'ı (üretimde ücretli servise
   geçilecek seam hazır: GeocodingService — hem `kitchens` hem `delivery` paketinde AYRI
-  birer `GeocodingService` var, karıştırma).
+  birer `GeocodingService` var, karıştırma). `delivery` olanına 2026-08-24'te sınırlı bir
+  LRU cache eklendi (negatif sonuçlar dahil), ama ⚠️ **çağrı hâlâ sipariş yolunda ve istek
+  thread'inde `Thread.sleep(1100)` yapıyor** — yük altında thread pool tüketir, ve OSM
+  sunucu tabanlı toplu kullanımda IP banlıyor.
 
 ## Backlog / brainstorm (2026-08-06)
 
 Tam liste masaüstünde `yapilacaklar-nanas-kitchens.txt`. Özet:
-- **Yapılacaklar:** chat rating'i tarayıcıda gözle kontrol et; `apps/api` (NestJS) dev script'i
-  `pnpm --parallel` ile DATABASE_URL bulamadan çöküyor (web'i etkilemiyor ama seed buradan
-  çalışıyor); Docker artık çalıştığına göre Testcontainers entegrasyon testlerini tekrar dene;
-  bağımsız buyer hesap sayfası yok; ödeme/teslimat/bildirim entegrasyonları hâlâ mock.
+- **Yapılacaklar:** chat rating'i tarayıcıda gözle kontrol et; ~~`apps/api` DATABASE_URL
+  bulamadan çöküyor~~ (2026-08-24'te düzeldi, `src/env.ts`); bağımsız buyer hesap sayfası
+  yok; ödeme/teslimat/bildirim entegrasyonları hâlâ mock. **Güncel liste 8. turda ve
+  masaüstündeki dosyada** — buradaki 08-06 özeti tarihsel.
 - **[YARIN — 2026-08-07] Deployment/altyapı:** AWS üzerinden domain alınacak (Route 53); ECS
   (Elastic Container Service) üzerine container deployment kurulacak; CI/CD deployment pipeline
   kurulacak; bir Jenkins server ayağa kaldırılacak.
@@ -606,11 +627,92 @@ hâlâ yerinde), `api` → Prisma `P1001` (yani üretilen client gerçek, stub d
   `pnpm-lock.yaml`'dan okunuyor (`test -n` ile boşsa build kasten patlıyor), yani lockfile
   tek doğruluk kaynağı olarak kalıyor.
 
-**Hâlâ ECS'e engel** (tam liste masaüstündeki `yapilacaklar-nanas-kitchens.txt`, E1-E14):
-fotoğraflar yerel diske yazılıyor (`LocalPhotoStorage`, Fargate'te efemer — S3 şart);
-MCP OAuth store'u, portions SSE sink map'i ve mock kurye quote'ları in-memory (ikinci
-task'ta bozulurlar); `MenuRolloverJob` kilitsiz; **Redis kodda hiç kullanılmıyor**
-(ElastiCache'i açmadan önce gerçekten bağla); Nominatim'i ECS'ten çağırmak IP ban riski.
+~~**Hâlâ ECS'e engel**: fotoğraflar yerel diske yazılıyor; MCP OAuth store'u, portions SSE
+sink map'i ve mock kurye quote'ları in-memory; `MenuRolloverJob` kilitsiz; Redis kodda hiç
+kullanılmıyor; Nominatim IP ban riski.~~ — **8. tur bunların çoğunu kapattı**, güncel liste
+aşağıda ve masaüstündeki `yapilacaklar-nanas-kitchens.txt`'te.
+
+### 8. tur — açık hata listesi kapandı, Redis gerçekten bağlandı (2026-08-24)
+
+Masaüstündeki todo'nun **bütün** açık hata listesi (H6, M15, M9–M13, L1–L5, L7–L9, L11)
+artı E8, E11'in cache kısmı, E6/E7/E10 ve M5/M14/L6 kapatıldı. Java testleri 29 → 39,
+web testleri 16 → 25. Dördü de mutasyon kontrolünden geçti.
+
+**En önemli üçü:**
+
+- **Teslimat adresi artık okunuyor (H6).** `deliveryAddressEncrypted` üç INSERT'te geçiyor
+  ve hiçbir SELECT'te geçmiyordu — yani sipariş verilebiliyor ama ne satıcı ne kurye adresi
+  görebiliyordu; teslimat akışı iki ucundan da kapalıydı. Satıcı panosu siparişi **kabul
+  ettikten sonra** (FR10 kademeli açıklama; `SELLER_ADDRESS_VISIBLE`) adresi çözüp
+  gösteriyor, `DeliveryProvider` arayüzü artık **pickup + dropoff** ikisini de alıyor
+  (eskiden pickup adresi olarak düz `null` geçiliyordu).
+- **Eşzamanlı 401'ler tek bir refresh'i paylaşıyor (M15).** ⚠️ Bu testi yazarken ısıran
+  assertion **çağrı sayısıdır**, status değil: bozuk halde de iki istek 200 dönüyor.
+- **`place()` artık her çağıran için doğruluyor (M10).** `CreateOrderRequest`'in
+  kısıtlarını sadece controller'daki `@Valid` uyguluyordu, yani chat agent'ın `createOrder`
+  tool'u hepsini atlıyordu (negatif kurye bahşişi, bozuk `fulfillment`). Yeni bir servis
+  metodu bir DTO alıyorsa, o DTO'nun kısıtlarının kimin tarafından uygulandığını sor.
+
+**Zaman dilimi — tekrar, ve bu sefer kök sebep (M13).** `Order.createdAt`'i Postgres'in
+`CURRENT_TIMESTAMP` varsayılanı dolduruyor; kolon `TIMESTAMP(3)` yani **saat dilimsiz**,
+ve `CURRENT_TIMESTAMP` **JDBC oturumunun** saat diliminde üretiliyor — pgjdbc de onu
+**JVM'in default'undan** alıyor. UTC+3 bir makinede satırlar, karşılaştırıldıkları UTC
+tarihlerin 3 saat önünde yazılıyordu; satıcı kazanç grafiği her UTC gününün ilk saatlerinde
+o günün ödemelerini düşürüyordu. Sorgu değil **yazma tarafı** düzeltildi:
+`TimeZone.setDefault(UTC)` (`main()`) + surefire'da `-Duser.timezone=UTC`. Artık DB
+varsayılanları, `Timestamp.toInstant()` ve sorgular aynı takvimde.
+⚠️ Bu turdan önce yazılmış satırlar hâlâ +03 duvar saatiyle duruyor (dev verisi).
+
+**Redis artık gerçekten kullanılıyor (E6/E7/E10).** Baştan beri `.env`'de ve compose'daydı,
+kod ona hiç dokunmuyordu — tüm repoda tek geçtiği yer bir yorum satırıydı.
+
+- **Portions SSE** artık `portions:{kitchenId}` pub/sub üzerinden. Her instance tek bir
+  **pattern aboneliği** tutuyor. Yayınlayan **kendi sink'ine kısa yol yapmıyor** — satışı
+  yapan instance dahil herkes aynı yoldan öğreniyor, yani "tek task'ta çalışan, iki task'ta
+  bozulan" bir yol kalmadı.
+- **Kurye quote'ları** Redis'te, TTL'li ve tek kullanımlık. ⚠️ Bu hatanın görünmez olmasının
+  sebebi: quote bulunamayınca mock base fee'ye düşüyordu ve base fee zaten quote ettiği
+  değerdi. **Dönen ücrete bakan bir test hiçbir şey kanıtlamaz** — testler Redis anahtarına
+  bakıyor.
+- ⚠️ `listenToPattern` **değil** `listenToPatternLater`: Redis pub/sub'ın backlog'u yok,
+  `PSUBSCRIBE` kaydolmadan önce yayınlanan mesaj kaybolur. "Akış var" ile "akış alacak"
+  ayrı anlar. `subscriptionEstablished()` ikincisini veriyor.
+- ⚠️ Publish **fire-and-forget değil**, 2 sn timeout'la bloklu. Commit sonrası çalışıyor ve
+  düşen bir `subscribe()` Redis kesintisini komple yutardı: sipariş başarılı, bütün
+  tarayıcılar bayat sayı, hiçbir yerde ses yok.
+- **Gerçekten doğrulandı:** `:8080` ve `:8081`'de iki JVM, SSE akışı B'de açık, sipariş
+  A'ya verildi, B'nin akışı **496 → 489** gitti.
+
+**NestJS orders modülü silindi (M5/M14/L6).** Kimse çağırmıyordu (web ve mcp-server ikisi de
+:8080) ama paylaşılan JWT secret'ıyla ağ içinden çalışıyordu ve migration öncesi halindeydi:
+`declined` sipariş tekrar iptal edilebiliyor (ikinci iade + ikinci stok iadesi),
+accepted/preparing/ready iptal edilebiliyor, `findUnique`+`update` arasında kilit yok, ve
+`@Body` tipi bir TS **interface** olduğu için `ValidationPipe`'ın bakacağı bir metatype yok —
+hiçbir alan doğrulanmıyordu. Aynı mantığı iki backend'de bakmak strangler'ın tersi olduğu
+için onarılmadı.
+
+**Denetimden kaçan dosyalar (L11).** `prisma/seed.ts`'te aynı nesne literalinde **iki
+`photo` anahtarı** vardı; ikincisi kazanıyor, yani yemek tanımlarındaki fotoğrafların hepsi
+ölü koddu. İki denetim birden kaçırmıştı: typescript-eslint `.ts` dosyalarında core
+`no-dupe-keys`'i **kapatıyor** (tsc yakalar varsayımıyla) ve `apps/api/tsconfig.json` sadece
+`"src"`'yi include ediyor — yani `prisma/` hiçbir programın içinde değildi. Kural geri
+açıldı, `apps/api/tsconfig.seed.json` eklendi ve CI'ya `pnpm --filter api typecheck:seed`
+adımı kondu. tsconfig ilk koşuşunda ölü satırın **tip hatası da** olduğunu buldu.
+
+**`apps/api` artık kendi `.env`'ini okuyor.** `src/env.ts` (dotenv) — `main.ts` ve
+`prisma/seed.ts` ilk önce onu import ediyor. `DATABASE_URL` export edilmemiş bir kabukta
+`pnpm seed` çalıştırılarak doğrulandı.
+
+**Secret rotasyonu — kısmi, bilerek.** `JWT_SECRET`, `JWT_REFRESH_SECRET`,
+`DELIVERY_WEBHOOK_SECRET` yenilendi (üçü de repoda yayınlanmış literal'lerdi).
+⚠️ **`ADDRESS_ENC_KEY` kasten dokunulmadı** — döndürmek mevcut şifreli adresleri kalıcı
+olarak okunamaz yapar. Doğru an, ECS'e geçerken yeni DB kurulduğunda.
+
+**Hâlâ ECS'e engel (güncel):** `E4` fotoğraflar yerel diske yazılıyor (S3 impl'i yok —
+**sıradaki iş**); `E5` MCP OAuth store'u hâlâ in-memory (Redis bağlı olduğu için artık
+küçük bir iş); `E2` migration job'ının **altyapı** tarafı (ECS RunTask + deploy adımı);
+`E3` domain gelince web imajının yeniden build edilmesi; `E11` geocoding hâlâ sipariş
+yolunda ve istek thread'inde blokluyor (cache eklendi ama asıl sorun duruyor).
 
 ## İsim / domain brainstorm (2026-08-07)
 
