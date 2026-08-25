@@ -45,8 +45,12 @@ ve ikinci kopya senkron. Test durumu: **Java 42, web 25, mcp-server 53**, lint 0
    `Thread.sleep(1100)` yapıyor (en kötü 4.4 sn bloklu thread). 8. turda cache eklendi ama
    tasarım değişmedi; yük altında thread pool tükenir, ayrıca OSM sunucu tabanlı toplu
    kullanımda IP banlıyor.
-2. **`merge/nanas-chatbot`** dalını merge et — çakışma yüzeyi her turda büyüyor.
-3. **Ürün tarafı** — bağımsız "hesabım"/profil sayfası ya da backlog'dan bir madde.
+2. **Ürün tarafı** — bağımsız "hesabım"/profil sayfası ya da backlog'dan bir madde.
+
+~~`merge/nanas-chatbot`~~ **2026-08-25'te merge edildi** (`87a4f6e`) — satıcı menü asistanı
+(`/seller/menu-chat`) ve adres otomatik tamamlama geldi; dalın taşıdığı ~2.500 satırlık
+ilgisiz agent tooling'i ve bozuk submodule girdisi **alınmadı**, yolları `.gitignore`'a
+eklendi. Ayrıntı: "11. tur".
 
 ⚠️ **Altyapıyı (VPC/ECS/RDS/ALB) henüz kurma.** Domain beklemiyor ama para bekliyor:
 $200 AWS Educate kredisi 7/24 açık bir kurulumda kabaca 6–7 haftada biter ve ürün canlı
@@ -858,6 +862,50 @@ taklit ediyor. Mutasyon kontrolü: store'u process-local yapınca üçü birden 
 ⚠️ **Test durumu artık process'ten uzun yaşıyor.** `beforeEach` Redis'i (kendi prefix'iyle)
 siliyor; olmazsa ikinci koşu birincinin rate-limit sayaçlarını devralıyor ve limit testleri
 kodla ilgisi olmayan bir sebeple patlıyor.
+
+### 11. tur — merge/nanas-chatbot merge edildi (2026-08-25)
+
+Haftalardır ıraksayan dal merge edildi. Gelen iki özellik: **satıcı menü asistanı**
+(`/seller/menu-chat` → `POST /chat/seller/stream`, SELLER korumalı; `SellerMenuTools`
+mutfağı her çağrıda JWT'den çözer, satıcı başkasınınkine dokunamaz) ve **adres otomatik
+tamamlama** (satıcı mutfak formu).
+
+⚠️ **Alınmayanlar:** dal ~2.500 satır / 33 dosya ilgisiz yerel agent tooling'i
+(`.agents/skills`, `skills/`, `original-skills/`, `skills-lock.json`) ve `.gitmodules`'u
+olmayan bir `open-montage` **gitlink'i** taşıyordu — hiçbir yere işaret etmeyen bir submodule
+girdisi, recursive klonu bozar. Repo public. Hepsi dışarıda bırakıldı ve yollar
+`.gitignore`'a eklendi.
+
+**İki tuzak da gerçekti, biri beklenmedik yerdeydi:**
+
+- İki dal "alıcının konumunu ajana gönder"i bağımsız yazmış — ve bunlar **aynı şeyin iki
+  uygulaması değil**: main'de kullanıcı haritadan konum **seçiyor** (`LocationPickerModal`,
+  kalıcı, race düzeltmeli, onay kartında "change address"), dalda **tarayıcı konum izni**
+  isteniyor. main'inki korundu, dalın öksüz yarısı **her iki taraftan** kaldırıldı:
+  istemcideki geolocation effect + state, sunucudaki `ChatRequest.Location` ve onu okuyan
+  `AgentService` enjeksiyonu. Yalnızca çakışan satırları çözen bir merge, tanımlı ve
+  controller'a bağlı ama **hiç dolmayan** bir alan bırakırdı.
+- Aynı şekil `KitchenOrderTools`'ta: main'in `searchKitchens` gövdesi çakışmayı kazanınca
+  dalın `nearbyOrDemo`/`demoFallback` yardımcıları öksüz kalıyordu. O fallback korunmaya
+  değer (Powell'da 8 seed mutfak var; başka yerdeki alıcı boş liste alıyor), o yüzden
+  `SystemPrompt` **iki yarımı da** tutuyor.
+
+**Küçük çözümler:** `Boolean confirm` korundu (ajan null gönderiyor, primitive ham Jackson
+hatası verir); `validateInput` korundu, her siparişte buyer id basan debug log satırı ve
+kullanılmayan kalan logger alanı atıldı; 8. turun `seed.ts`'i korundu; README'de main'in
+talimatları kaldı, dalın `pnpm dev:local` kısayolu yanına eklendi (bash script, Windows'ta
+`dev.cmd` tercih edilmeli).
+
+⚠️ **Çalıştırınca çıktı, okuyarak değil:** satıcı ajanı düz "selam"a **"Aleykümselam"** diye
+cevap veriyordu. `SystemPrompt` kural 10 bunu alıcı ajanı için açıkça yasaklıyor;
+`SellerSystemPrompt`'ta o kural **hiç yoktu**. Eklendi, yeniden başlatıldı, tekrar soruldu →
+"Selam! Bugün ne pişiriyoruz?". İki ajan varsa, davranış kuralları **iki prompt'ta da** olmalı.
+
+Ayrıca `menu-chat`'te main'in lint'inin reddettiği boş bir `catch` bloğu düzeltildi — dal
+lint'in gerçek olmasından (3. tur) önceye dayanıyor.
+
+**Doğrulama:** Java 42 test (3 skip — S3, MinIO kapalı), web 25, mcp-server 53, lint 0 hata,
+build temiz. Uç uca kontrol: alıcı `/chat/seller/stream`'e **403**, satıcı **200** ve akış geldi.
 
 ## İsim — KARAR VERİLDİ: "Nanas' Kitchens" (2026-08-24)
 
