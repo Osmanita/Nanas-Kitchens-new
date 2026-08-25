@@ -33,6 +33,33 @@ Demo pazaryeri artık **Powell, Ohio (43065)** merkezli (bkz. Seed verisi).
 - Yani "origin Osmanita'dır" cümlesi yanlıştı; nereye push edeceğini varsayma, `git remote -v`
   ve `git ls-remote --heads origin` ile teyit et.
 
+## NEREDEYİZ (2026-08-25 — buradan devam)
+
+**Kod tarafında ECS'e engel kalmadı.** "İkinci task'ta bozulur" listesinin tamamı kapandı
+(E5, E6, E7, E8, E10). Son commit `7533c52`, CI yeşil (run `32786792961`), `origin/osman`
+ve ikinci kopya senkron. Test durumu: **Java 42, web 25, mcp-server 53**, lint 0 hata.
+
+**Sıradaki iş — biri seçilecek:**
+
+1. **E11'in asıl kısmı.** Geocoding hâlâ sipariş yolunda ve istek thread'inde
+   `Thread.sleep(1100)` yapıyor (en kötü 4.4 sn bloklu thread). 8. turda cache eklendi ama
+   tasarım değişmedi; yük altında thread pool tükenir, ayrıca OSM sunucu tabanlı toplu
+   kullanımda IP banlıyor.
+2. **`merge/nanas-chatbot`** dalını merge et — çakışma yüzeyi her turda büyüyor.
+3. **Ürün tarafı** — bağımsız "hesabım"/profil sayfası ya da backlog'dan bir madde.
+
+⚠️ **Altyapıyı (VPC/ECS/RDS/ALB) henüz kurma.** Domain beklemiyor ama para bekliyor:
+$200 AWS Educate kredisi 7/24 açık bir kurulumda kabaca 6–7 haftada biter ve ürün canlı
+değilken o saati başlatmanın anlamı yok. Kurarken **NAT Gateway**'e dikkat — hiçbir şey
+yapmasan bile aylık ~$32 baz + trafik, ve plan private subnet üzerine kurulu.
+
+**Karara bağlanmış olanlar:** isim `Nanas' Kitchens` (kesin), domain `nanaskitchens.co`
+(30'unda alınacak — kredi domain alımını ödemiyor, karttan çıkar). AWS hesabı **var**,
+CLI kuruldu, ama `aws configure sso` **henüz çalıştırılmadı** (us-east-2, profil `nanas`).
+
+Tam liste ve ortam tuzakları: masaüstünde `yapilacaklar-nanas-kitchens.txt`.
+(08-08 tarihli `.bak` kopyası 08-25'te silindi — içeriği o dosyaya taşınmıştı.)
+
 ## Mimari (strangler migration)
 
 - **`apps/api-java`** — ana backend (:8080). Spring Boot 4 + Spring AI. Auth, kitchens,
