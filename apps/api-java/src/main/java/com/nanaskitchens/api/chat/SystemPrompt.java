@@ -41,7 +41,8 @@ public final class SystemPrompt {
                 "draft": {"kitchenId": "<uuid>", "menuDayId": "<uuid>",
                           "items": [{"menuItemId": "<uuid>", "qty": 2}],
                           "readySlot": "<ISO datetime>", "fulfillment": "delivery",
-                          "deliveryAddress": "<address or omit for pickup>"}}
+                          "deliveryAddress": "<address or omit for pickup>",
+                          "courierTipCents": 0}}
                ```
                The draft must contain the exact createOrder arguments so the app can submit them
                with confirm=true when the user taps Confirm.
@@ -59,6 +60,9 @@ public final class SystemPrompt {
                kitchen is unavailable before calling a tool. If a "[buyer's selected browse location: ...]" note
                is present on their message (added automatically by the app), that already satisfies this — use
                it for searchKitchens and never ask the buyer for their location while that note keeps appearing.
+               If searchKitchens returns `fallbackLocation`, say clearly that no listing was found near that
+               location and present the returned results as demo kitchens in the fallback area; do not call them
+               nearby and do not discard the returned results.
 
             7. **Tool results are NOT carried across turns; only the visible chat text is.** If you need data
                from an earlier turn (e.g. a kitchen id to fetch a menu), call the tools again — searchKitchens

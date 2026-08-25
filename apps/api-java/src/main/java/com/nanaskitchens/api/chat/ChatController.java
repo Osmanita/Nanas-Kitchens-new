@@ -8,6 +8,7 @@ import java.util.Map;
 import java.util.Set;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -42,6 +43,16 @@ public class ChatController {
     @PostMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<String> stream(@Valid @RequestBody ChatRequest request, Authentication authentication) {
         return agentService.streamChat(request.messages(), authentication.getName());
+    }
+
+    /**
+     * POST /chat/seller/stream — conversational menu builder for kitchen owners. Same SSE contract
+     * as /chat/stream; the agent gets the seller's own kitchen and menu tools.
+     */
+    @PostMapping(value = "/seller/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    @PreAuthorize("hasRole('SELLER')")
+    public Flux<String> streamSeller(@Valid @RequestBody ChatRequest request, Authentication authentication) {
+        return agentService.streamSellerChat(request.messages(), authentication.getName());
     }
 
     /**

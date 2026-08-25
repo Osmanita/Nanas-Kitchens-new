@@ -40,6 +40,11 @@ set -a && . ./.env && set +a
 Windows'ta `.\dev.cmd` bunlarin hepsini (compose, migrate, export, dev serverlar) tek
 komutta yapar — ayrinti icin `CLAUDE.md`'deki "Calistirma" bolumune bak.
 
+Alternatif (macOS / Linux): `pnpm dev:local` eski derleme ciktilarini temizler, `.env`'i
+yukler ve Java API ile web'i tek komutta baslatir (`scripts/run-local.sh`); sadece
+temizlik icin `pnpm clean:local`. Bash script'i oldugu icin Windows'ta `.\dev.cmd`
+tercih edilmeli.
+
 ## Hizli test
 ```bash
 curl localhost:8080/health
@@ -66,11 +71,40 @@ curl 'localhost:8080/kitchens/search?lat=37.788&lng=-122.4075'
 - [x] 6.1 Puan & yorumlar     - [x] 6.2 Menu anketleri  - [x] 6.3 Yemek istekleri
 - [x] 7.1 Saglik belgeleri    - [x] 7.2 Mufettis portali - [x] 7.3 Admin konsolu + itirazlar
 - [x] Satici web portali (menu/porsiyon, siparis panosu, profil+foto, kazanclar)
+- [x] Satici menu asistani (/seller/menu-chat — sohbetle menu olusturma ve yayinlama)
 - [x] Alici siparis gecmisi (/orders)
 - [ ] Kalanlar: gercek DoorDash/Grubhub, Stripe Connect satici odemeleri, FCM/SES
       kanallari, token refresh UI akisi, gunluk seed otomasyonu
 
-## Geliştirici notu — son çalışma (11 Temmuz 2026)
+## Geliştirici notu — son çalışma (10 Ağustos 2026)
+
+### Tamamlananlar
+
+- **Satıcı menü asistanı (`/seller/menu-chat`).** Mutfak sahibi "yarın 8 porsiyon
+  imambayıldı, 11 dolardan" yazıyor; ajan yemekleri, tarihli menüyü ve yayınlamayı
+  kendisi yapıyor. Yeni uç: `POST /chat/seller/stream` (`hasRole('SELLER')`).
+  Araçlar `SellerMenuTools` içinde (getMyKitchen / listDishes / createDish /
+  listMenuDays / createMenuDay / updateMenuDay / publishMenuDay); mutfak her çağrıda
+  JWT'den çözülür, satıcı başkasının mutfağına dokunamaz. Onay kartı (`menuDraft`)
+  onaylanmadan DB'ye hiçbir şey yazılmaz. Detay: CLAUDE.md.
+- Chat markdown renderer'ı `apps/web/lib/rich-text.tsx`'e taşındı; alıcı ve satıcı
+  sohbetleri tek kopyayı paylaşıyor.
+- **Takılı kalan migration düzeltildi.** `20260710210000_dish_calories` "failed" olarak
+  kayıtlıydı (kolon zaten vardı), bu yüzden `prisma migrate deploy` her seferinde
+  patlıyordu ve yeni migration uygulanamıyordu. `migrate resolve --applied` ile
+  düzeltildi; artık "No pending migrations" diyor. Şema/veri değişmedi.
+- **Yerel Postgres gölgelemesi belgelendi** (CLAUDE.md → Veri/DB kuralları): gerçek veri
+  Homebrew PG 18.4'te, docker'daki `db` konteyneri (PG 16.4) boş ve kullanılmıyor.
+
+### Bilinen açık — koyu tema kontrastı
+
+`prefers-color-scheme: dark` altında `.shell-core` kartları koyu zemin alıyor ama `body`
+pazar temasının koyu metin rengini taşıdığı için kart başlıkları koyu-üstüne-koyu çıkıyor.
+`/seller/menu-chat` kendi kartlarında satır içi `color: var(--text)` ile çözüyor; kalıcı
+çözüm globals.css'teki `.shell-core` kuralına `color: var(--text)` eklemek (`/chat` ve
+`/track` ile paylaşıldığı için iki temada da kontrol edilmeli).
+
+## Geliştirici notu — önceki çalışma (11 Temmuz 2026)
 
 ### Tamamlananlar
 

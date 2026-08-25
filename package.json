@@ -3,6 +3,8 @@
   "private": true,
   "scripts": {
     "dev": "pnpm --parallel --filter './apps/*' dev",
+    "clean:local": "bash ./scripts/clean-local-builds.sh",
+    "dev:local": "bash ./scripts/run-local.sh",
     "build": "pnpm -r build",
     "test": "pnpm -r test",
     "lint": "eslint ."

@@ -14,6 +14,10 @@ target/
 *.class
 hs_err_pid*
 
+# Gradle / Kotlin Multiplatform generated state
+.gradle/
+build/
+
 # IDE / OS
 .idea/
 *.iml
@@ -29,3 +33,11 @@ hs_err_pid*
 packages/core/src/*.js
 packages/core/src/*.js.map
 packages/core/src/*.d.ts
+
+# Local agent tooling. A branch once carried ~2,500 lines of these into the repo by
+# accident, plus a submodule pointer with no .gitmodules; this is a public repo and none
+# of it belongs here. Keep them out rather than re-deleting them after every merge.
+skills/
+original-skills/
+skills-lock.json
+.agents/
