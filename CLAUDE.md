@@ -33,11 +33,13 @@ Demo pazaryeri artık **Powell, Ohio (43065)** merkezli (bkz. Seed verisi).
 - Yani "origin Osmanita'dır" cümlesi yanlıştı; nereye push edeceğini varsayma, `git remote -v`
   ve `git ls-remote --heads origin` ile teyit et.
 
-## NEREDEYİZ (2026-08-25 — buradan devam)
+## NEREDEYİZ (2026-08-26 — buradan devam)
 
 **Kod tarafında ECS'e engel kalmadı.** "İkinci task'ta bozulur" listesinin tamamı kapandı
-(E5, E6, E7, E8, E10). Son commit `7533c52`, CI yeşil (run `32786792961`), `origin/osman`
-ve ikinci kopya senkron. Test durumu: **Java 42, web 25, mcp-server 53**, lint 0 hata.
+(E5, E6, E7, E8, E10) ve `merge/nanas-chatbot` merge edildi — **açık dal kalmadı**.
+Son commit `b789240`, CI yeşil (run `32861937772`), `origin/osman` ve ikinci kopya senkron.
+Test durumu: **Java 42** (3'ü skip — S3, MinIO kapalıyken), **web 25, mcp-server 53**,
+lint 0 hata.
 
 **Sıradaki iş — biri seçilecek:**
 
