@@ -1,17 +1,25 @@
 /* Brand tokens — front-end-spec.md "Brand & Visual Identity" */
 :root {
+  color-scheme: light;
+  --app-header-height: 84px;
   --brand-orange: #e8720c;
   --brand-orange-dark: #c95f05;
   --brand-green: #2e4a2e;
-  --brand-cream: #faf3e4;
+  --brand-cream: #f8f7f2;
   --brand-ink: #24281f;
-  --brand-muted: #6b7280;
-  --brand-border: #e5decb;
+  --brand-muted: #686e63;
+  --brand-border: #e1e3d8;
 }
 
 * {
   box-sizing: border-box;
 }
+
+button, input, textarea, select { font-family: inherit; }
+button { color: inherit; }
+:focus-visible { outline: 2px solid var(--brand-green); outline-offset: 4px; }
+#main-content:focus { outline: none; }
+@media (max-width: 1100px) { :root { --app-header-height: 112px; } }
 
 body {
   margin: 0;
@@ -389,6 +397,10 @@ a {
 
 /* Notification bell (Story 4.4) */
 .bell {
+  display: grid;
+  place-items: center;
+  min-width: 36px;
+  min-height: 36px;
   position: relative;
   background: transparent;
   border: none;
@@ -414,7 +426,7 @@ a {
   position: absolute;
   right: 0;
   top: 36px;
-  width: 320px;
+  width: min(320px, calc(100vw - 40px));
   max-height: 420px;
   overflow-y: auto;
   background: #fff;
@@ -460,16 +472,15 @@ a.notif-item:hover {
 
 :root {
   --surface: #ffffff;
-  --surface-2: #eceef1;
-  --line: #dfe2e7;
-  --text: #15171c;
-  --text-2: #5a6069;
-  --text-3: #878e98;
-  /* Olympic palette: blue is the chat accent; ring colors feed the hero glow. */
-  --accent: #0081c8;
-  --accent-strong: #006ba6;
-  --accent-strong-hover: #005a8c;
-  --accent-soft: #e3f1fa;
+  --surface-2: #efefe7;
+  --line: #e1e3d8;
+  --text: #28372b;
+  --text-2: #5e685b;
+  --text-3: #6e7569;
+  --accent: #3e6248;
+  --accent-strong: #31553d;
+  --accent-strong-hover: #24442e;
+  --accent-soft: #e9eee2;
   --accent-on: #ffffff;
   --ring-blue: #0081c8;
   --ring-yellow: #fcb131;
@@ -485,27 +496,8 @@ a.notif-item:hover {
   --ease: cubic-bezier(0.32, 0.72, 0, 1);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --surface: #1d1f24;
-    --surface-2: #24262c;
-    --line: #2e3138;
-    --text: #ecedef;
-    --text-2: #a4a9b1;
-    --text-3: #6f747d;
-    --accent: #4aa8dc;
-    --accent-strong: #006ba6;
-    --accent-strong-hover: #0081c8;
-    --accent-soft: #122a3a;
-    --bubble-user: var(--accent-strong);
-    --bubble-assistant: #24262c;
-    --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.35);
-    --shadow-soft: 0 2px 6px rgba(0, 0, 0, 0.25), 0 24px 64px -16px rgba(0, 0, 0, 0.5);
-    --shell-bg: rgba(255, 255, 255, 0.04);
-    --shell-ring: rgba(255, 255, 255, 0.08);
-    --glass: rgba(29, 31, 36, 0.72);
-  }
-}
+/* The marketplace has a light canvas. Keep every shared surface in the same theme
+   instead of darkening only the navigation and chat when the OS uses dark mode. */
 
 /* Double-bezel shell: outer tray + inner core, concentric radii */
 .shell {

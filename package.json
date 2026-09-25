@@ -5,6 +5,7 @@
     "dev": "pnpm --parallel --filter './apps/*' dev",
     "clean:local": "bash ./scripts/clean-local-builds.sh",
     "dev:local": "bash ./scripts/run-local.sh",
+    "stripe:listen": "node scripts/stripe-listen.cjs",
     "build": "pnpm -r build",
     "test": "pnpm -r test",
     "lint": "eslint ."

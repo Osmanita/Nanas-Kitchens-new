@@ -12,6 +12,8 @@ import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { money } from "../../lib/cart";
 
+export const PAYMENT_TIMEOUT_MS = 45_000;
+
 export interface PendingPayment {
   orderId: string;
   clientSecret: string;
@@ -30,6 +32,16 @@ export default function PaymentStep({
   onPaid?: () => void;
 }) {
   const stripePromise = useMemo(() => loadStripe(payment.publishableKey), [payment.publishableKey]);
+  if (!payment.clientSecret || !payment.publishableKey) {
+    return (
+      <div className="card" style={{ marginTop: 16, borderColor: "var(--brand-orange)" }}>
+        <h2 style={{ fontSize: 17, color: "var(--brand-green)", marginTop: 0 }}>Payment</h2>
+        <div className="form-error" role="alert">
+          Payment could not be initialized. Please return to your order and try again.
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="card" style={{ marginTop: 16, borderColor: "var(--brand-orange)" }}>
       <h2 style={{ fontSize: 17, color: "var(--brand-green)", marginTop: 0 }}>Payment</h2>
@@ -60,25 +72,46 @@ function PaymentForm({
   const router = useRouter();
   const [payError, setPayError] = useState<string | null>(null);
   const [paying, setPaying] = useState(false);
+  const [elementReady, setElementReady] = useState(false);
 
   async function pay() {
-    if (!stripe || !elements) return;
+    if (!stripe || !elements || !elementReady || paying) return;
     setPaying(true);
     setPayError(null);
-    // Cards settle inline; redirect-based methods return here via return_url. Either way
-    // the order page shows "payment processing" until the webhook confirms it.
-    const { error } = await stripe.confirmPayment({
-      elements,
-      confirmParams: { return_url: `${window.location.origin}/orders/${orderId}` },
-      redirect: "if_required",
-    });
-    if (error) {
-      setPayError(error.message ?? "Payment failed — try another payment method.");
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    try {
+      // Cards settle inline; redirect-based methods return here via return_url. Either way
+      // the order page shows "payment processing" until the webhook confirms it. The timeout
+      // prevents a blocked Stripe iframe/network request from leaving the UI stuck forever.
+      const result = await Promise.race([
+        stripe.confirmPayment({
+          elements,
+          confirmParams: { return_url: `${window.location.origin}/orders/${orderId}` },
+          redirect: "if_required",
+        }),
+        new Promise<never>((_, reject) => {
+          timeoutId = setTimeout(
+            () => reject(new Error("PAYMENT_TIMEOUT")),
+            PAYMENT_TIMEOUT_MS,
+          );
+        }),
+      ]);
+      if (result.error) {
+        setPayError(result.error.message ?? "Payment failed — try another payment method.");
+        return;
+      }
+      onPaid?.();
+      router.push(`/orders/${orderId}`);
+    } catch (error) {
+      setPayError(
+        error instanceof Error && error.message === "PAYMENT_TIMEOUT"
+          ? "Payment confirmation timed out. Check your connection and try again."
+          : "Payment could not be completed. Please try again.",
+      );
+    } finally {
+      if (timeoutId) clearTimeout(timeoutId);
       setPaying(false);
-      return;
     }
-    onPaid?.();
-    router.push(`/orders/${orderId}`);
   }
 
   return (
@@ -88,11 +121,18 @@ function PaymentForm({
           {payError}
         </div>
       )}
-      <PaymentElement />
+      <PaymentElement
+        onReady={() => setElementReady(true)}
+        onLoadError={(event) => {
+          setElementReady(false);
+          setPayError(event.error.message ?? "The payment form could not load. Please try again.");
+        }}
+      />
       <button
+        type="button"
         className="btn-primary"
         style={{ marginTop: 16 }}
-        disabled={!stripe || !elements || paying}
+        disabled={!stripe || !elements || !elementReady || paying}
         onClick={pay}
       >
         {paying ? "Paying…" : `Pay ${money(totalCents)}`}

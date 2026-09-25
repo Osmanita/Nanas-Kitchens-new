@@ -172,16 +172,18 @@ export default function LocationPickerModal({ open, onClose, onConfirm, restrict
           {restrictToUS && " (Şimdilik yalnızca ABD adresleri destekleniyor.)"}
         </p>
 
-        <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
           <input
             type="text"
+            aria-label="Search for a location"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder={
               restrictToUS ? "ABD adresi, sokak, şehir veya posta kodu yaz…" : "Adres, sokak, şehir veya posta kodu yaz…"
             }
             style={{
-              flex: 1,
+              flex: "1 1 190px",
+              minWidth: 0,
               padding: "10px 12px",
               borderRadius: 8,
               border: "1px solid var(--brand-border)",

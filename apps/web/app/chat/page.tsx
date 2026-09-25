@@ -3,10 +3,16 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { apiFetch } from "../../lib/api";
-import { getLocation, saveLocation, type PickedLocation } from "../../lib/location";
+import {
+  getLocation,
+  saveLocation,
+  type PickedLocation,
+} from "../../lib/location";
 import { renderRich } from "../../lib/rich-text";
 import LocationPickerModal from "../components/LocationPickerModal";
 import PaymentStep, { type PendingPayment } from "../components/PaymentStep";
+import Icon from "../components/Icon";
+import styles from "./chat.module.css";
 
 interface Message {
   role: "user" | "assistant";
@@ -66,10 +72,18 @@ interface ConfirmedOrder {
 }
 
 const SUGGESTIONS = [
-  "Find Turkish food near me",
-  "What's cooking in Powell today?",
-  "I want to order sarma",
-];
+  { title: "A taste of home", text: "Find Turkish food near me", icon: "bowl" },
+  {
+    title: "Something fresh",
+    text: "Find vegetarian dishes near me",
+    icon: "leaf",
+  },
+  {
+    title: "Let’s see what’s cooking",
+    text: "What's cooking near me today?",
+    icon: "arrow",
+  },
+] as const;
 
 function cents(n: number) {
   return `$${(n / 100).toFixed(2)}`;
@@ -79,34 +93,80 @@ function cents(n: number) {
 const CONFIDENCE_THRESHOLD = 0.85;
 const MAX_RECORDING_SECONDS = 60;
 
+/**
+ * The agent is instructed to wrap structured cards in a JSON fence, but providers can vary
+ * whitespace and line endings. Keep the card path forgiving: try fenced JSON first, then a
+ * single raw object so a valid response never falls through as a wall of JSON text.
+ */
+function extractStructuredBlock(
+  text: string,
+): { raw: string; parsed: Record<string, unknown> } | null {
+  const candidates: { raw: string; body: string }[] = [];
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  if (fenced) candidates.push({ raw: fenced[0], body: fenced[1] });
+
+  const firstBrace = text.indexOf("{");
+  const lastBrace = text.lastIndexOf("}");
+  if (firstBrace >= 0 && lastBrace > firstBrace) {
+    candidates.push({
+      raw: text.slice(firstBrace, lastBrace + 1),
+      body: text.slice(firstBrace, lastBrace + 1),
+    });
+  }
+
+  for (const candidate of candidates) {
+    try {
+      const parsed: unknown = JSON.parse(candidate.body);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return {
+          raw: candidate.raw,
+          parsed: parsed as Record<string, unknown>,
+        };
+      }
+    } catch {
+      // This may be ordinary prose containing braces. Try the next candidate.
+    }
+  }
+  return null;
+}
+
 /** Renders ISO datetimes in locale format; falls back to the raw text ("18:00", "ASAP"). */
 function fmtSlot(value: string) {
   const t = Date.parse(value);
   return Number.isNaN(t) ? value : new Date(t).toLocaleString();
 }
 
-/** Geocodes the drop-off address (OpenStreetMap Nominatim) and embeds a marked map. */
+/** Shows a resilient delivery preview: the map is an enhancement, while the address card
+ * remains useful when a browser blocks geocoding or the OpenStreetMap embed. */
 function AddressMap({ address }: { address: string }) {
-  const [coords, setCoords] = useState<{ lat: number; lon: number } | null>(null);
+  const [coords, setCoords] = useState<{ lat: number; lon: number } | null>(
+    null,
+  );
   const [failed, setFailed] = useState(false);
+  const [mapLoaded, setMapLoaded] = useState(false);
 
   useEffect(() => {
     let alive = true;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 8_000);
     setCoords(null);
     setFailed(false);
+    setMapLoaded(false);
     // Same tiered fallback as the server: drop leading tokens until a variant resolves.
     const tokens = address.trim().replace(/[,;]+/g, " ").split(/\s+/);
-    const candidates = [];
+    const candidates: string[] = [];
     for (let drop = 0; drop <= Math.min(3, tokens.length - 2); drop++) {
-      candidates.push(tokens.slice(drop).join(" "));
+      const candidate = tokens.slice(drop).join(" ");
+      if (candidate) candidates.push(candidate);
     }
     (async () => {
       for (const candidate of candidates) {
         try {
           const r = await fetch(
             `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(candidate)}`,
-            { headers: { accept: "application/json" } },
+            { headers: { accept: "application/json" }, signal: controller.signal },
           );
+          if (!r.ok) break;
           const d = await r.json();
           if (!alive) return;
           if (Array.isArray(d) && d[0]) {
@@ -116,51 +176,56 @@ function AddressMap({ address }: { address: string }) {
         } catch {
           break;
         }
-        await new Promise((resolve) => setTimeout(resolve, 1100));
+        await new Promise((resolve) => setTimeout(resolve, 350));
         if (!alive) return;
       }
       if (alive) setFailed(true);
     })();
     return () => {
       alive = false;
+      controller.abort();
+      clearTimeout(timeoutId);
     };
   }, [address]);
 
-  if (failed) {
-    return (
-      <p style={{ fontSize: 13.5, color: "var(--text-3)", margin: "8px 0 0" }}>
-        Map preview unavailable for this address.
-      </p>
-    );
-  }
-  if (!coords) {
-    return (
-      <div
-        style={{
-          height: 190,
-          borderRadius: 14,
-          background: "var(--surface-2)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          color: "var(--text-3)",
-          fontSize: 14,
-          marginTop: 12,
-        }}
-      >
-        Locating address on the map
-      </div>
-    );
-  }
+  const mapUrl = coords
+    ? `https://www.openstreetmap.org/?mlat=${coords.lat}&mlon=${coords.lon}#map=15/${coords.lat}/${coords.lon}`
+    : `https://www.openstreetmap.org/search?query=${encodeURIComponent(address)}`;
   const d = 0.004;
-  const bbox = `${coords.lon - d},${coords.lat - d},${coords.lon + d},${coords.lat + d}`;
+  const bbox = coords
+    ? `${coords.lon - d},${coords.lat - d},${coords.lon + d},${coords.lat + d}`
+    : null;
   return (
-    <iframe
-      title="Delivery drop-off location"
-      src={`https://www.openstreetmap.org/export/embed.html?bbox=${encodeURIComponent(bbox)}&layer=mapnik&marker=${coords.lat}%2C${coords.lon}`}
-      style={{ width: "100%", height: 190, border: "1px solid var(--line)", borderRadius: 14, marginTop: 12 }}
-      loading="lazy"
-    />
+    <div className={styles.addressPreview}>
+      {coords && !failed && bbox && (
+        <iframe
+          title="Delivery drop-off location"
+          src={`https://www.openstreetmap.org/export/embed.html?bbox=${encodeURIComponent(bbox)}&layer=mapnik&marker=${coords.lat}%2C${coords.lon}`}
+          className={`${styles.addressFrame} ${mapLoaded ? styles.addressFrameVisible : ""}`}
+          onLoad={() => setMapLoaded(true)}
+          onError={() => setFailed(true)}
+          loading="lazy"
+        />
+      )}
+      {!mapLoaded || failed || !coords ? (
+        <div className={styles.addressFallback} aria-label="Delivery address preview">
+          <div className={styles.addressMapGraphic} aria-hidden="true">
+            <span className={styles.addressMapRoad} />
+            <span className={styles.addressMapRoadAlt} />
+            <span className={styles.addressPin}>●</span>
+          </div>
+        </div>
+      ) : null}
+      <div className={styles.addressDetails}>
+        <div>
+          <span>{failed ? "Map preview unavailable" : "Delivery location"}</span>
+          <strong>{address}</strong>
+        </div>
+        <a href={mapUrl} target="_blank" rel="noreferrer">
+          Open map
+        </a>
+      </div>
+    </div>
   );
 }
 
@@ -168,11 +233,21 @@ export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
-  const [pendingSummary, setPendingSummary] = useState<OrderSummary | null>(null);
+  const [failure, setFailure] = useState<{
+    text: string;
+    history: Message[];
+    message: string;
+  } | null>(null);
+  const [pendingSummary, setPendingSummary] = useState<OrderSummary | null>(
+    null,
+  );
   const [confirming, setConfirming] = useState(false);
   const [pendingMenu, setPendingMenu] = useState<MenuCard | null>(null);
-  const [pendingKitchens, setPendingKitchens] = useState<KitchenListCard | null>(null);
-  const [confirmedOrder, setConfirmedOrder] = useState<ConfirmedOrder | null>(null);
+  const [pendingKitchens, setPendingKitchens] =
+    useState<KitchenListCard | null>(null);
+  const [confirmedOrder, setConfirmedOrder] = useState<ConfirmedOrder | null>(
+    null,
+  );
   // Set when POST /orders answers requiresPayment (the real Stripe provider): the order is
   // placed but pending, so the card below has to settle it before anything is "confirmed".
   const [pendingPayment, setPendingPayment] = useState<
@@ -185,8 +260,13 @@ export default function ChatPage() {
   const [transcribing, setTranscribing] = useState(false);
   const [voiceNotice, setVoiceNotice] = useState<string | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
-  const recordTimerRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const recordTimerRef = useRef<ReturnType<typeof setInterval> | undefined>(
+    undefined,
+  );
+  const conversationRef = useRef<HTMLDivElement>(null);
+  const resultsRef = useRef<HTMLElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const followConversationRef = useRef(true);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const [location, setLocation] = useState<PickedLocation | null>(null);
@@ -219,8 +299,26 @@ export default function ChatPage() {
   }, []);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+    const pane = conversationRef.current;
+    if (pane && followConversationRef.current)
+      pane.scrollTop = pane.scrollHeight;
+  }, [messages, pendingKitchens, pendingMenu, failure]);
+
+  useEffect(() => {
+    const pane = conversationRef.current;
+    const card = pendingKitchens
+      ? resultsRef.current
+      : pendingMenu
+        ? menuRef.current
+        : null;
+    if (pane && card && followConversationRef.current) {
+      // Show the beginning of new results, not the bottom of a long kitchen list.
+      pane.scrollTop +=
+        card.getBoundingClientRect().top -
+        pane.getBoundingClientRect().top -
+        80;
+    }
+  }, [pendingKitchens, pendingMenu]);
 
   useEffect(() => () => clearInterval(recordTimerRef.current), []);
 
@@ -228,7 +326,7 @@ export default function ChatPage() {
   useEffect(() => {
     if (streaming) return;
     inputRef.current?.focus();
-    if (queued) {
+    if (queued && !failure) {
       const text = queued;
       setQueued(null);
       send(text);
@@ -240,9 +338,15 @@ export default function ChatPage() {
   // read location straight through — the `location` state var from the OTHER mount effect
   // is still null at that point (setState there hasn't re-rendered yet), so relying on the
   // closure alone silently dropped the hint on that very first message.
-  async function send(text: string, locationOverride?: PickedLocation | null) {
+  async function send(
+    text: string,
+    locationOverride?: PickedLocation | null,
+    history: Message[] = messages,
+  ) {
     if (!text.trim() || streaming) return;
-    const next: Message[] = [...messages, { role: "user", content: text }];
+    const next: Message[] = [...history, { role: "user", content: text }];
+    setFailure(null);
+    followConversationRef.current = true;
     setMessages(next);
     setInput("");
     setStreaming(true);
@@ -260,7 +364,8 @@ export default function ChatPage() {
       // The picked location (Home page or this page's own picker) rides along as a hidden
       // suffix on the outgoing user turn only — the visible bubble stays just what was typed,
       // but the agent sees it every turn and never needs to ask (SystemPrompt rule 6).
-      const effectiveLocation = locationOverride !== undefined ? locationOverride : location;
+      const effectiveLocation =
+        locationOverride !== undefined ? locationOverride : location;
       const payloadMessages = effectiveLocation
         ? next.map((m, i) =>
             i === next.length - 1
@@ -283,7 +388,12 @@ export default function ChatPage() {
         return;
       }
       if (!res.ok) {
-        setMessages([...next, { role: "assistant", content: `Something went wrong (HTTP ${res.status}). Please try again.` }]);
+        setFailure({
+          text,
+          history,
+          message:
+            "Nana couldn’t reply just now. Please try your message again.",
+        });
         return;
       }
 
@@ -307,41 +417,33 @@ export default function ChatPage() {
       }
 
       // Structured card blocks embedded in assistant text (menu picker / order summary).
-      const blockMatch = assistantText.match(/```json\n([\s\S]*?)\n```/);
-      if (blockMatch) {
-        try {
-          const parsed = JSON.parse(blockMatch[1]);
-          let handled = false;
-          if (parsed.type === "menu" && Array.isArray(parsed.items)) {
-            setPendingMenu(parsed);
-            setPendingKitchens(null);
-            handled = true;
-          } else if (parsed.type === "kitchens" && Array.isArray(parsed.items)) {
-            setPendingKitchens(parsed);
-            handled = true;
-          } else if (parsed.confirmed === false && parsed.summary) {
-            setPendingSummary(parsed);
-            handled = true;
-          }
-          // The card renders the data; don't also show the raw JSON in the bubble.
-          if (handled) assistantText = assistantText.replace(blockMatch[0], "").trim();
-        } catch {
-          // Not one of the structured cards - leave the block in the text and render it
-          // normally. A malformed card must never break the whole message.
+      const structured = extractStructuredBlock(assistantText);
+      if (structured) {
+        const parsed = structured.parsed;
+        let handled = false;
+        if (parsed.type === "menu" && Array.isArray(parsed.items)) {
+          setPendingMenu(parsed as unknown as MenuCard);
+          setPendingKitchens(null);
+          handled = true;
+        } else if (parsed.type === "kitchens" && Array.isArray(parsed.items)) {
+          setPendingKitchens(parsed as unknown as KitchenListCard);
+          handled = true;
+        } else if (parsed.confirmed === false && parsed.summary) {
+          setPendingSummary(parsed as unknown as OrderSummary);
+          handled = true;
         }
+        // The card renders the data; don't also show the raw JSON in the bubble.
+        if (handled)
+          assistantText = assistantText.replace(structured.raw, "").trim();
       }
 
       setMessages([...next, { role: "assistant", content: assistantText }]);
     } catch {
-      setMessages([
-        ...next,
-        {
-          role: "assistant",
-          content: assistantText
-            ? assistantText + "\n\n[connection interrupted]"
-            : "Connection error. Please try again.",
-        },
-      ]);
+      setFailure({
+        text,
+        history,
+        message: "The connection was interrupted. Try again when you’re ready.",
+      });
     } finally {
       setStreaming(false);
     }
@@ -383,7 +485,10 @@ export default function ChatPage() {
     const body = await res.json();
     setPendingSummary(null);
     if (!res.ok) {
-      setMessages((prev) => [...prev, { role: "assistant", content: `Error: ${body.message}` }]);
+      setMessages((prev) => [
+        ...prev,
+        { role: "assistant", content: `Error: ${body.message}` },
+      ]);
       return;
     }
     if (body.requiresPayment) {
@@ -418,14 +523,18 @@ export default function ChatPage() {
     });
     setMessages((prev) => [
       ...prev,
-      { role: "assistant", content: "Order confirmed! 🎉 Here are the details:" },
+      {
+        role: "assistant",
+        content: "Order confirmed! 🎉 Here are the details:",
+      },
     ]);
   }
 
   function addPickedToOrder() {
     if (!pendingMenu) return;
-    const selected = pendingMenu.items
-      .filter((it) => (picked[it.menuItemId] ?? 0) > 0);
+    const selected = pendingMenu.items.filter(
+      (it) => (picked[it.menuItemId] ?? 0) > 0,
+    );
     if (selected.length === 0) return;
     const parts = selected.map((it) => `${picked[it.menuItemId]} x ${it.name}`);
     const menuItemIds = selected.map((it) => it.menuItemId).join("|");
@@ -490,9 +599,14 @@ export default function ChatPage() {
     try {
       const data = new FormData();
       data.append("audio", blob, "voice.webm");
-      const res = await apiFetch(`/chat/transcribe`, { method: "POST", body: data });
+      const res = await apiFetch(`/chat/transcribe`, {
+        method: "POST",
+        body: data,
+      });
       if (!res.ok) {
-        setVoiceNotice("Could not transcribe that — try again or type instead.");
+        setVoiceNotice(
+          "Could not transcribe that — try again or type instead.",
+        );
         return;
       }
       const body: { transcript: string; confidence: number } = await res.json();
@@ -506,7 +620,9 @@ export default function ChatPage() {
         else send(body.transcript);
       } else {
         setInput(body.transcript);
-        setVoiceNotice("I'm not sure I heard that right — check the text below, then send.");
+        setVoiceNotice(
+          "I'm not sure I heard that right — check the text below, then send.",
+        );
       }
     } finally {
       setTranscribing(false);
@@ -514,222 +630,304 @@ export default function ChatPage() {
   }
 
   const lastMessage = messages[messages.length - 1];
-  const showTyping = streaming && (!lastMessage || lastMessage.role === "user" || !lastMessage.content);
+  const showTyping =
+    streaming &&
+    (!lastMessage || lastMessage.role === "user" || !lastMessage.content);
+
+  function newConversation() {
+    setMessages([]);
+    setPendingKitchens(null);
+    setPendingMenu(null);
+    setPendingSummary(null);
+    setConfirmedOrder(null);
+    setFailure(null);
+    setPicked({});
+    setQueued(null);
+    setInput("");
+    inputRef.current?.focus();
+  }
 
   return (
-    <main
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        // The fixed global header + its 78px spacer sit above this page, so "100dvh" alone
-        // now overshoots the viewport by that much — height (not minHeight) caps it so the
-        // message pane's flex:1/overflow-y:auto scrolls internally instead of the whole page.
-        height: "calc(100dvh - 78px)",
-        maxWidth: 760,
-        margin: "0 auto",
-        padding: "14px 16px 0",
-        position: "relative",
-      }}
-    >
-      <div className="hero-glow" aria-hidden="true" style={{ opacity: 0.6 }} />
-
+    <main className={styles.page}>
       <LocationPickerModal
         open={locationPickerOpen}
-        onClose={location ? () => setLocationPickerOpen(false) : undefined}
+        onClose={() => setLocationPickerOpen(false)}
         onConfirm={confirmLocation}
       />
 
-      {/* Site nav + sign-out live in the global Header now — just the chat-specific
-          location indicator stays here. */}
-      <div style={{ display: "flex", justifyContent: "center", width: "100%" }}>
-        <button
-          type="button"
-          onClick={() => setLocationPickerOpen(true)}
-          className="chip"
-          style={{
-            fontSize: 12.5,
-            padding: "5px 12px",
-            maxWidth: 260,
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-          }}
-          title={location?.label ?? "Konum seç"}
-        >
-          📍 {location ? location.label.split(",")[0] : "Konum seç"}
-        </button>
-      </div>
-
-      <div role="log" aria-live="polite" style={{ flex: 1, overflowY: "auto", padding: "24px 2px" }}>
-        {messages.length === 0 && (
-          <div style={{ textAlign: "center", marginTop: "13vh" }}>
-            <div className="halo-orb stagger" style={{ "--i": 0 } as React.CSSProperties}>
-              N
-            </div>
-            <h1
-              className="stagger"
-              style={
-                {
-                  "--i": 1,
-                  fontSize: "clamp(26px, 4vw, 34px)",
-                  fontWeight: 700,
-                  letterSpacing: "-0.03em",
-                  margin: "0 0 10px",
-                } as React.CSSProperties
+      <header className={styles.toolbar}>
+        <div className={styles.identity}>
+          <span className={styles.assistantMark}>
+            <Icon name="bowl" />
+          </span>
+          <div>
+            <h1>Nana&rsquo;s table</h1>
+            <p>Your guide to good home cooking</p>
+          </div>
+        </div>
+        <div className={styles.toolbarActions}>
+          <button
+            type="button"
+            onClick={() => setLocationPickerOpen(true)}
+            className={styles.location}
+            title={location?.label ?? "Choose a location"}
+            aria-label={`Change browse location${location ? `: ${location.label}` : ""}`}
+          >
+            <Icon name="pin" width="17" height="17" />
+            <span>
+              <small>Browsing near</small>
+              <strong>
+                {location ? location.label.split(",")[0] : "Choose location"}
+              </strong>
+            </span>
+            <Icon name="chevron" width="16" height="16" />
+          </button>
+          {messages.length > 0 && (
+            <button
+              type="button"
+              onClick={newConversation}
+              className={styles.newChat}
+              disabled={
+                streaming ||
+                recording ||
+                transcribing ||
+                confirming ||
+                !!pendingPayment
               }
+              aria-label="Start a new conversation"
+              title="New conversation"
             >
-              What are you <span className="hero-em">craving</span> today?
-            </h1>
-            <p
-              className="stagger"
-              style={{ "--i": 2, color: "var(--text-2)", fontSize: 15.5, margin: "0 0 32px" } as React.CSSProperties}
-            >
-              Find kitchens, browse menus, and order in one conversation.
-            </p>
-            <div style={{ display: "flex", gap: 10, justifyContent: "center", flexWrap: "wrap" }}>
-              {SUGGESTIONS.map((s, i) => (
+              <Icon name="plus" />
+            </button>
+          )}
+        </div>
+      </header>
+
+      <div
+        ref={conversationRef}
+        className={styles.conversation}
+        onScroll={(e) => {
+          const pane = e.currentTarget;
+          followConversationRef.current =
+            pane.scrollHeight - pane.scrollTop - pane.clientHeight < 100;
+        }}
+      >
+        {messages.length === 0 && (
+          <section className={styles.welcome} aria-labelledby="welcome-heading">
+            <div className={styles.welcomeIntro}>
+              <p className={styles.eyebrow}>
+                From a neighbor&rsquo;s kitchen, with love
+              </p>
+              <h2 id="welcome-heading">
+                What sounds
+                <br />
+                <em>good today?</em>
+              </h2>
+              <p className={styles.welcomeCopy}>
+                A familiar dish. A new favorite. Tell Nana what you&rsquo;re
+                craving, and find the home cooks making it nearby.
+              </p>
+              <span className={styles.welcomeNote}>
+                <Icon name="bowl" width="16" height="16" /> Find a kitchen. Pick
+                your dishes. Make yourself at home.
+              </span>
+            </div>
+            <div className={styles.suggestions}>
+              <p>A little inspiration</p>
+              {SUGGESTIONS.map((s) => (
                 <button
-                  key={s}
-                  className="chip stagger"
-                  style={{ "--i": 3 + i } as React.CSSProperties}
-                  onClick={() => send(s)}
+                  key={s.text}
+                  className={styles.suggestion}
+                  onClick={() => send(s.text)}
                 >
-                  {s}
+                  <span className={styles.suggestionIcon}>
+                    <Icon name={s.icon} />
+                  </span>
+                  <span>
+                    <strong>{s.title}</strong>
+                    <small>{s.text}</small>
+                  </span>
+                  <Icon name="arrow" width="17" height="17" />
                 </button>
               ))}
             </div>
+          </section>
+        )}
+
+        <div
+          role="log"
+          aria-label="Conversation with Nana"
+          aria-live="polite"
+          aria-busy={streaming}
+        >
+          {messages.map((m, i) => {
+            // Structured results become cards once complete; don't flash their JSON during streaming.
+            const visibleContent =
+              streaming && i === messages.length - 1 && m.role === "assistant"
+                ? m.content.replace(/```json[\s\S]*?(?:```|$)/g, "").trim()
+                : m.content;
+            if (!visibleContent) return null;
+            return (
+              <div
+                key={i}
+                className={`${styles.message} ${m.role === "user" ? styles.userMessage : styles.assistantMessage}`}
+              >
+                {m.role === "assistant" && (
+                  <span className={styles.messageAvatar} aria-hidden="true">
+                    N
+                  </span>
+                )}
+                <div className={styles.messageBody}>
+                  <span className={styles.messageAuthor}>
+                    {m.role === "user" ? "You" : "Nana"}
+                  </span>
+                  <div className={styles.messageContent}>
+                    {renderRich(visibleContent)}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {streaming && (
+          <div className={styles.typing} role="status">
+            <span className="typing-dot" />
+            <span className="typing-dot" />
+            <span className="typing-dot" />
+            <span>
+              {showTyping ? "Nana is thinking…" : "Finding the good stuff…"}
+            </span>
           </div>
         )}
 
-        {messages.map((m, i) => (
-          <div
-            key={i}
-            className="fade-up"
-            style={{
-              marginBottom: 16,
-              display: "flex",
-              gap: 10,
-              justifyContent: m.role === "user" ? "flex-end" : "flex-start",
-            }}
-          >
-            {m.role === "assistant" && <div className="avatar-orb">N</div>}
-            <div className={`bubble ${m.role === "user" ? "bubble-user" : "bubble-assistant"}`}>
-              {renderRich(m.content)}
-            </div>
-          </div>
-        ))}
-
-        {showTyping && (
-          <div className="fade-up" style={{ display: "flex", gap: 10, justifyContent: "flex-start", marginBottom: 16 }}>
-            <div className="avatar-orb">N</div>
-            <div
-              className="bubble bubble-assistant"
-              style={{ display: "flex", gap: 5, alignItems: "center", padding: "15px 18px" }}
-              aria-label="Assistant is typing"
+        {failure && (
+          <div className={styles.error} role="alert">
+            <p>{failure.message}</p>
+            <button
+              type="button"
+              onClick={() => send(failure.text, undefined, failure.history)}
+              disabled={streaming}
             >
-              <span className="typing-dot" />
-              <span className="typing-dot" />
-              <span className="typing-dot" />
-            </div>
+              Try again <Icon name="arrow" width="16" height="16" />
+            </button>
           </div>
         )}
 
         {/* Kitchen list card: a photo grid instead of a numbered text list */}
         {pendingKitchens && (
-          <div className="fade-up shell" style={{ margin: "14px 0" }}>
-            <div className="shell-core" style={{ padding: "18px 20px" }}>
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))",
-                  gap: 12,
-                }}
-              >
-                {pendingKitchens.items.map((k) => {
-                  const soldOut = k.portionsLeftToday === 0;
-                  return (
-                    <button
-                      key={k.id}
-                      type="button"
-                      onClick={() => send(`Show me the menu for ${k.name}`)}
-                      disabled={soldOut}
-                      style={{
-                        display: "flex",
-                        gap: 10,
-                        textAlign: "left",
-                        border: "1px solid var(--line)",
-                        borderRadius: 14,
-                        padding: 10,
-                        background: "var(--surface)",
-                        cursor: soldOut ? "default" : "pointer",
-                        opacity: soldOut ? 0.55 : 1,
-                      }}
-                    >
-                      {k.photo ? (
-                        <img
-                          src={k.photo}
-                          alt={k.name}
-                          style={{ width: 68, height: 68, borderRadius: 12, objectFit: "cover", flexShrink: 0 }}
-                        />
-                      ) : (
-                        <div
-                          style={{
-                            width: 68,
-                            height: 68,
-                            borderRadius: 12,
-                            background: "var(--surface-2)",
-                            flexShrink: 0,
-                          }}
-                        />
-                      )}
-                      <div style={{ minWidth: 0 }}>
-                        <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
-                          <div style={{ fontWeight: 600, fontSize: 14.5 }}>{k.name}</div>
-                          {k.ratingAvg != null && (
-                            <span style={{ fontSize: 12.5, color: "var(--text-2)", whiteSpace: "nowrap" }}>
-                              &#9733; {k.ratingAvg.toFixed(1)}
-                              {k.ratingCount != null && ` (${k.ratingCount})`}
-                            </span>
-                          )}
-                        </div>
-                        <div style={{ fontSize: 12.5, color: "var(--text-2)", marginTop: 2 }}>
-                          {k.cuisineTag[0]?.toUpperCase() + k.cuisineTag.slice(1)} &middot; {k.distanceMiles} mi
-                          &middot; {soldOut ? "Sold out today" : `${k.portionsLeftToday} left`}
-                        </div>
-                        {k.description && (
-                          <div
-                            style={{
-                              fontSize: 12.5,
-                              color: "var(--text-3)",
-                              marginTop: 4,
-                              lineHeight: 1.4,
-                            }}
-                          >
-                            {k.description}
-                          </div>
-                        )}
-                      </div>
-                    </button>
-                  );
-                })}
+          <section
+            ref={resultsRef}
+            className={styles.results}
+            aria-labelledby="kitchens-heading"
+          >
+            <div className={styles.resultsHeading}>
+              <div>
+                <p className={styles.eyebrow}>Meet the home cooks</p>
+                <h2 id="kitchens-heading">A kitchen for every craving</h2>
               </div>
+              <span>
+                {pendingKitchens.items.length} kitchen
+                {pendingKitchens.items.length === 1 ? "" : "s"}
+              </span>
             </div>
-          </div>
+            <div className={styles.kitchenList}>
+              {pendingKitchens.items.map((k) => {
+                const soldOut = k.portionsLeftToday === 0;
+                return (
+                  <button
+                    key={k.id}
+                    type="button"
+                    onClick={() => send(`Show me the menu for ${k.name}`)}
+                    disabled={soldOut || streaming}
+                    className={styles.kitchen}
+                    aria-label={`View menu for ${k.name}${soldOut ? ", sold out today" : ""}`}
+                  >
+                    {k.photo ? (
+                      <img
+                        src={k.photo}
+                        alt={k.name}
+                        className={styles.kitchenPhoto}
+                        loading="lazy"
+                      />
+                    ) : (
+                      <span className={styles.kitchenPhoto}>
+                        <Icon name="bowl" width="28" height="28" />
+                      </span>
+                    )}
+                    <span className={styles.kitchenInfo}>
+                      <span className={styles.kitchenMeta}>
+                        <span>
+                          {k.cuisineTag[0]?.toUpperCase() +
+                            k.cuisineTag.slice(1)}{" "}
+                          home cooking
+                        </span>
+                        {k.ratingAvg != null && (
+                          <span className={styles.rating}>
+                            &#9733; {k.ratingAvg.toFixed(1)}
+                            {k.ratingCount != null && ` (${k.ratingCount})`}
+                          </span>
+                        )}
+                      </span>
+                      <strong className={styles.kitchenName}>{k.name}</strong>
+                      {k.description && (
+                        <span className={styles.kitchenDescription}>
+                          {k.description}
+                        </span>
+                      )}
+                      <span className={styles.availability}>
+                        {soldOut
+                          ? "Sold out today"
+                          : `${k.portionsLeftToday} portions available`}
+                      </span>
+                    </span>
+                    <span className={styles.viewMenu}>
+                      View menu <Icon name="arrow" width="18" height="18" />
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </section>
         )}
 
         {/* Order confirmed card: links straight to the order detail page instead of a raw id */}
         {confirmedOrder && (
           <div className="fade-up shell" style={{ margin: "14px 0" }}>
-            <div className="shell-core" style={{ padding: 20, textAlign: "center" }}>
+            <div
+              className="shell-core"
+              style={{ padding: 20, textAlign: "center" }}
+            >
               <div style={{ fontSize: 32 }}>🎉</div>
-              <h2 style={{ margin: "6px 0 4px", fontSize: 17, fontWeight: 700 }}>Order confirmed!</h2>
+              <h2
+                style={{ margin: "6px 0 4px", fontSize: 17, fontWeight: 700 }}
+              >
+                Order confirmed!
+              </h2>
               {confirmedOrder.readySlot && (
-                <p style={{ margin: "0 0 14px", color: "var(--text-2)", fontSize: 14 }}>
+                <p
+                  style={{
+                    margin: "0 0 14px",
+                    color: "var(--text-2)",
+                    fontSize: 14,
+                  }}
+                >
                   Ready {fmtSlot(confirmedOrder.readySlot)}
                 </p>
               )}
-              <div style={{ display: "flex", gap: 10, justifyContent: "center", flexWrap: "wrap" }}>
-                <Link href={`/orders/${confirmedOrder.id}`} className="btn btn-primary" style={{ padding: "10px 22px" }}>
+              <div
+                style={{
+                  display: "flex",
+                  gap: 10,
+                  justifyContent: "center",
+                  flexWrap: "wrap",
+                }}
+              >
+                <Link
+                  href={`/orders/${confirmedOrder.id}`}
+                  className="btn btn-primary"
+                  style={{ padding: "10px 22px" }}
+                >
                   View order
                 </Link>
                 {confirmedOrder.trackingUrl && (
@@ -766,18 +964,31 @@ export default function ChatPage() {
             redirects to /orders/{id}; the order stays pending until the webhook lands. */}
         {pendingPayment && (
           <div className="fade-up" style={{ margin: "14px 0" }}>
-            <PaymentStep payment={pendingPayment} totalCents={pendingPayment.totalCents} />
+            <PaymentStep
+              payment={pendingPayment}
+              totalCents={pendingPayment.totalCents}
+            />
           </div>
         )}
 
         {/* Dish picker card: photos, ingredients, calories, quantity steppers */}
         {pendingMenu && (
-          <div className="fade-up shell" style={{ margin: "14px 0" }}>
+          <div
+            ref={menuRef}
+            className="fade-up shell"
+            style={{ margin: "14px 0" }}
+          >
             <div className="shell-core" style={{ padding: "18px 20px" }}>
               <h2 style={{ margin: "0 0 2px", fontSize: 16, fontWeight: 700 }}>
                 {pendingMenu.kitchenName}
               </h2>
-              <p style={{ margin: "0 0 6px", color: "var(--text-2)", fontSize: 13.5 }}>
+              <p
+                style={{
+                  margin: "0 0 6px",
+                  color: "var(--text-2)",
+                  fontSize: 13.5,
+                }}
+              >
                 Pick your dishes, then add them to the order.
               </p>
               {pendingMenu.items.map((it) => {
@@ -786,12 +997,18 @@ export default function ChatPage() {
                 return (
                   <div key={it.menuItemId} className="dish-row">
                     {it.photo ? (
-                      <img src={it.photo} alt={it.name} className="dish-photo" />
+                      <img
+                        src={it.photo}
+                        alt={it.name}
+                        className="dish-photo"
+                      />
                     ) : (
                       <div className="dish-photo" />
                     )}
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontWeight: 600, fontSize: 15 }}>{it.name}</div>
+                      <div style={{ fontWeight: 600, fontSize: 15 }}>
+                        {it.name}
+                      </div>
                       {it.description && (
                         <div
                           style={{
@@ -813,27 +1030,43 @@ export default function ChatPage() {
                           flexWrap: "wrap",
                         }}
                       >
-                        <span style={{ fontWeight: 700, fontSize: 14 }}>{cents(it.priceCents)}</span>
+                        <span style={{ fontWeight: 700, fontSize: 14 }}>
+                          {cents(it.priceCents)}
+                        </span>
                         {typeof it.calories === "number" && (
                           <span className="kcal">~{it.calories} kcal</span>
                         )}
                         {typeof it.portionsLeft === "number" && (
-                          <span style={{ fontSize: 12.5, color: "var(--text-3)" }}>
+                          <span
+                            style={{ fontSize: 12.5, color: "var(--text-3)" }}
+                          >
                             {it.portionsLeft} left
                           </span>
                         )}
                         {(it.dietaryTags ?? []).map((tag) => (
-                          <span key={tag} className="kcal" style={{ textTransform: "capitalize" }}>
+                          <span
+                            key={tag}
+                            className="kcal"
+                            style={{ textTransform: "capitalize" }}
+                          >
                             {tag}
                           </span>
                         ))}
                       </div>
                     </div>
-                    <div className="stepper" aria-label={`Quantity for ${it.name}`}>
+                    <div
+                      className="stepper"
+                      aria-label={`Quantity for ${it.name}`}
+                    >
                       <button
                         type="button"
                         disabled={q === 0}
-                        onClick={() => setPicked({ ...picked, [it.menuItemId]: Math.max(0, q - 1) })}
+                        onClick={() =>
+                          setPicked({
+                            ...picked,
+                            [it.menuItemId]: Math.max(0, q - 1),
+                          })
+                        }
                         aria-label={`Remove one ${it.name}`}
                       >
                         &minus;
@@ -842,7 +1075,9 @@ export default function ChatPage() {
                       <button
                         type="button"
                         disabled={q >= max}
-                        onClick={() => setPicked({ ...picked, [it.menuItemId]: q + 1 })}
+                        onClick={() =>
+                          setPicked({ ...picked, [it.menuItemId]: q + 1 })
+                        }
                         aria-label={`Add one ${it.name}`}
                       >
                         +
@@ -854,7 +1089,8 @@ export default function ChatPage() {
               {(() => {
                 const count = Object.values(picked).reduce((a, b) => a + b, 0);
                 const total = pendingMenu.items.reduce(
-                  (sum, it) => sum + (picked[it.menuItemId] ?? 0) * it.priceCents,
+                  (sum, it) =>
+                    sum + (picked[it.menuItemId] ?? 0) * it.priceCents,
                   0,
                 );
                 return (
@@ -871,7 +1107,9 @@ export default function ChatPage() {
                       {count > 0 ? (
                         <>
                           {count} item{count === 1 ? "" : "s"},{" "}
-                          <strong style={{ color: "var(--text)" }}>{cents(total)}</strong>
+                          <strong style={{ color: "var(--text)" }}>
+                            {cents(total)}
+                          </strong>
                         </>
                       ) : (
                         "Nothing picked yet"
@@ -894,128 +1132,155 @@ export default function ChatPage() {
 
         {/* Order confirmation card (FR15) */}
         {pendingSummary && (
-          <div role="dialog" aria-labelledby="summary-heading" className="fade-up shell" style={{ margin: "14px 0" }}>
+          <div
+            role="dialog"
+            aria-labelledby="summary-heading"
+            className="fade-up shell"
+            style={{ margin: "14px 0" }}
+          >
             <div className="shell-core" style={{ padding: 20 }}>
-            <h2 id="summary-heading" style={{ margin: "0 0 4px", fontSize: 16, fontWeight: 700 }}>
-              Order summary
-            </h2>
-            {pendingSummary.summary.kitchenName && (
-              <p style={{ margin: "0 0 12px", color: "var(--text-2)", fontSize: 14 }}>
-                {pendingSummary.summary.kitchenName}
-              </p>
-            )}
-            <div style={{ borderTop: "1px solid var(--line)", padding: "12px 0", margin: "8px 0" }}>
-              {pendingSummary.summary.items.map((it, i) => (
-                <div
-                  key={i}
-                  style={{ display: "flex", justifyContent: "space-between", fontSize: 15, padding: "4px 0" }}
-                >
-                  <span>
-                    {it.qty} &times; {it.name}
-                  </span>
-                  <span style={{ fontWeight: 600 }}>{cents(it.priceCents * it.qty)}</span>
-                </div>
-              ))}
-            </div>
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                fontSize: 15,
-                fontWeight: 700,
-                padding: "4px 0 2px",
-              }}
-            >
-              <span>Total</span>
-              <span>{cents(pendingSummary.summary.totalCents)}</span>
-            </div>
-            <p style={{ margin: "10px 0 2px", fontSize: 14, color: "var(--text-2)" }}>
-              Ready {fmtSlot(pendingSummary.summary.readySlot)}
-              {", "}
-              {pendingSummary.summary.fulfillment}
-            </p>
-            {pendingSummary.summary.deliveryAddress && (
-              <>
-                <div
+              <h2
+                id="summary-heading"
+                style={{ margin: "0 0 4px", fontSize: 16, fontWeight: 700 }}
+              >
+                Order summary
+              </h2>
+              {pendingSummary.summary.kitchenName && (
+                <p
                   style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "baseline",
-                    gap: 10,
-                    marginTop: 8,
+                    margin: "0 0 12px",
+                    color: "var(--text-2)",
+                    fontSize: 14,
                   }}
                 >
-                  <p style={{ margin: 0, fontSize: 14.5 }}>
-                    <strong>Deliver to:</strong> {pendingSummary.summary.deliveryAddress}
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => setDeliveryPickerOpen(true)}
+                  {pendingSummary.summary.kitchenName}
+                </p>
+              )}
+              <div
+                style={{
+                  borderTop: "1px solid var(--line)",
+                  padding: "12px 0",
+                  margin: "8px 0",
+                }}
+              >
+                {pendingSummary.summary.items.map((it, i) => (
+                  <div
+                    key={i}
                     style={{
-                      fontSize: 13,
-                      fontWeight: 700,
-                      padding: "7px 16px",
-                      flexShrink: 0,
-                      border: "1.5px solid var(--accent)",
-                      background: "var(--accent-soft)",
-                      color: "var(--accent-strong)",
-                      borderRadius: 999,
-                      cursor: "pointer",
+                      display: "flex",
+                      justifyContent: "space-between",
+                      fontSize: 15,
+                      padding: "4px 0",
                     }}
                   >
-                    📍 Change address
-                  </button>
-                </div>
-                <AddressMap address={pendingSummary.summary.deliveryAddress} />
-                <LocationPickerModal
-                  open={deliveryPickerOpen}
-                  onClose={() => setDeliveryPickerOpen(false)}
-                  onConfirm={changeDeliveryAddress}
-                  restrictToUS={false}
-                />
-              </>
-            )}
-            <p style={{ margin: "16px 0 0", fontSize: 15, fontWeight: 600 }}>
-              Do you confirm this order?
-            </p>
-            <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
-              <button
-                onClick={confirmOrder}
-                disabled={confirming}
-                aria-busy={confirming}
-                className="btn btn-primary"
-                style={{ padding: "10px 22px" }}
+                    <span>
+                      {it.qty} &times; {it.name}
+                    </span>
+                    <span style={{ fontWeight: 600 }}>
+                      {cents(it.priceCents * it.qty)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  fontSize: 15,
+                  fontWeight: 700,
+                  padding: "4px 0 2px",
+                }}
               >
-                {confirming ? "Placing order…" : "Confirm order"}
-              </button>
-              <button
-                onClick={() => setPendingSummary(null)}
-                disabled={confirming}
-                className="btn btn-ghost"
-                style={{ padding: "9px 18px" }}
+                <span>Total</span>
+                <span>{cents(pendingSummary.summary.totalCents)}</span>
+              </div>
+              <p
+                style={{
+                  margin: "10px 0 2px",
+                  fontSize: 14,
+                  color: "var(--text-2)",
+                }}
               >
-                Cancel
-              </button>
-            </div>
+                Ready {fmtSlot(pendingSummary.summary.readySlot)}
+                {", "}
+                {pendingSummary.summary.fulfillment}
+              </p>
+              {pendingSummary.summary.deliveryAddress && (
+                <>
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "baseline",
+                      gap: 10,
+                      marginTop: 8,
+                    }}
+                  >
+                    <p style={{ margin: 0, fontSize: 14.5 }}>
+                      <strong>Deliver to:</strong>{" "}
+                      {pendingSummary.summary.deliveryAddress}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setDeliveryPickerOpen(true)}
+                      style={{
+                        fontSize: 13,
+                        fontWeight: 700,
+                        padding: "7px 16px",
+                        flexShrink: 0,
+                        border: "1.5px solid var(--accent)",
+                        background: "var(--accent-soft)",
+                        color: "var(--accent-strong)",
+                        borderRadius: 999,
+                        cursor: "pointer",
+                      }}
+                    >
+                      📍 Change address
+                    </button>
+                  </div>
+                  <AddressMap
+                    address={pendingSummary.summary.deliveryAddress}
+                  />
+                  <LocationPickerModal
+                    open={deliveryPickerOpen}
+                    onClose={() => setDeliveryPickerOpen(false)}
+                    onConfirm={changeDeliveryAddress}
+                    restrictToUS={false}
+                  />
+                </>
+              )}
+              <p style={{ margin: "16px 0 0", fontSize: 15, fontWeight: 600 }}>
+                Do you confirm this order?
+              </p>
+              <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
+                <button
+                  onClick={confirmOrder}
+                  disabled={confirming}
+                  aria-busy={confirming}
+                  className="btn btn-primary"
+                  style={{ padding: "10px 22px" }}
+                >
+                  {confirming ? "Placing order…" : "Confirm order"}
+                </button>
+                <button
+                  onClick={() => setPendingSummary(null)}
+                  disabled={confirming}
+                  className="btn btn-ghost"
+                  style={{ padding: "9px 18px" }}
+                >
+                  Cancel
+                </button>
+              </div>
             </div>
           </div>
         )}
-
-        <div ref={bottomRef} />
       </div>
 
-      <div style={{ marginTop: "auto" }}>
+      <div className={styles.composerArea}>
         {queued && (
-          <p
-            aria-live="polite"
-            style={{
-              fontSize: 13,
-              color: "var(--text-3)",
-              margin: "0 0 6px",
-              paddingLeft: 22,
-            }}
-          >
-            Will send when the assistant finishes: &ldquo;{queued}&rdquo;
+          <p aria-live="polite" className={styles.queued}>
+            {failure ? "Queued for after your retry" : "Next up"}: &ldquo;
+            {queued}&rdquo;
           </p>
         )}
         {voiceNotice && (
@@ -1033,19 +1298,19 @@ export default function ChatPage() {
             {voiceNotice}
           </p>
         )}
-        <form onSubmit={onSubmit} className="chat-dock" style={{ marginBottom: 14 }}>
+        <form onSubmit={onSubmit} className={styles.composer}>
           <input
             ref={inputRef}
             aria-label="Message"
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            autoFocus
+            autoComplete="off"
             placeholder={
               recording
                 ? "Listening…"
                 : transcribing
                   ? "Transcribing…"
-                  : "Ask for a dish, a cuisine, or a kitchen"
+                  : "What are you craving? Ask Nana…"
             }
           />
           <button
@@ -1054,20 +1319,27 @@ export default function ChatPage() {
             disabled={transcribing}
             aria-label={recording ? "Stop recording" : "Record a voice message"}
             aria-pressed={recording}
-            className="btn btn-ghost"
-            style={{
-              padding: "8px 12px",
-              borderRadius: 999,
-              fontVariantNumeric: "tabular-nums",
-              ...(recording ? { background: "#dc2626", color: "#fff" } : {}),
-            }}
+            className={styles.voiceButton}
+            title={recording ? "Stop recording" : "Use your voice"}
           >
-            {recording ? `⏹ 0:${String(recordSeconds).padStart(2, "0")}` : transcribing ? "…" : "🎤"}
+            <Icon name={recording ? "stop" : "mic"} />
+            {recording && (
+              <span>0:{String(recordSeconds).padStart(2, "0")}</span>
+            )}
           </button>
-          <button type="submit" disabled={!input.trim()} aria-label="Send" className="send-orb">
-            &#8599;
+          <button
+            type="submit"
+            disabled={!input.trim() || recording || transcribing}
+            aria-label="Send"
+            className={styles.sendButton}
+          >
+            <Icon name="send" />
           </button>
         </form>
+        <p className={styles.composerHint}>
+          <span>A little conversation. A lovely meal.</span>
+          <span>Enter to send</span>
+        </p>
       </div>
     </main>
   );
