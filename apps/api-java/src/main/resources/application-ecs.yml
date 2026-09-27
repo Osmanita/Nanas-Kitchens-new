@@ -1,0 +1,36 @@
+# Activated only by SPRING_PROFILES_ACTIVE=ecs; local development keeps its own defaults.
+server:
+  shutdown: graceful
+  forward-headers-strategy: framework
+
+spring:
+  lifecycle:
+    timeout-per-shutdown-phase: 30s
+  datasource:
+    url: jdbc:postgresql://${DB_HOST}:5432/${DB_NAME:culture_eats}?stringtype=unspecified&sslmode=verify-full&sslrootcert=/etc/ssl/certs/rds-ca-bundle.pem
+    username: ${DB_USER}
+    password: ${DB_PASSWORD}
+    hikari:
+      connection-timeout: 3000
+      validation-timeout: 2000
+      maximum-pool-size: 10
+  data:
+    redis:
+      # The infrastructure generates an alphanumeric password, safe inside this URL.
+      url: rediss://:${REDIS_PASSWORD}@${REDIS_HOST}:6379
+      connect-timeout: 2s
+      timeout: 2s
+
+app:
+  cors:
+    allowed-origin-patterns: ${WEB_BASE_URL:https://nanaskitchens.app}
+  menus:
+    daily-rollover: false
+  payments:
+    provider: stripe
+    web-base-url: ${WEB_BASE_URL:https://nanaskitchens.app}
+  storage:
+    provider: s3
+    public-base-url: ${PUBLIC_BASE_URL:https://api.nanaskitchens.app}
+  geocoding:
+    user-agent: NanasKitchens/1.0 (+https://nanaskitchens.app)

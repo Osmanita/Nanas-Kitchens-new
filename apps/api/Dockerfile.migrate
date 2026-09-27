@@ -32,7 +32,15 @@ FROM node:22-alpine
 
 # Prisma's query/schema engines are dynamically linked against OpenSSL; on musl it
 # picks the linux-musl-openssl-3.0.x build, which needs openssl present.
-RUN apk add --no-cache openssl ca-certificates
+RUN apk add --no-cache openssl ca-certificates curl postgresql-client \
+ && curl --fail --silent --show-error --location \
+      https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem \
+      --output /etc/ssl/certs/rds-ca-bundle.pem
+# Prisma's native TLS loader accepts one PEM per certificate. Trust every regional
+# RDS root, not just the first certificate in the global bundle.
+RUN awk '/-----BEGIN CERTIFICATE-----/{n++; out="/usr/local/share/ca-certificates/rds-" n ".crt"} out {print > out} /-----END CERTIFICATE-----/{close(out); out=""}' \
+      /etc/ssl/certs/rds-ca-bundle.pem \
+ && update-ca-certificates
 
 WORKDIR /job
 
@@ -50,6 +58,7 @@ RUN PRISMA_VERSION="$(awk '/^  apps\/api:/{f=1} f && /^      prisma:$/{getline; 
 # invalidate this layer or this image's identity. `migrate deploy` never generates a
 # client, so @prisma/client is not needed here.
 COPY apps/api/prisma/ ./prisma/
+COPY scripts/ecs/migrate.cjs scripts/ecs/grant-app-role.sql ./
 
 # No update check / telemetry ping at runtime: this job runs in a private subnet with
 # no egress, and a blocked outbound call is a slow start at best.
@@ -60,4 +69,4 @@ USER node
 
 # `migrate deploy` applies pending migrations and never prompts, never resets, never
 # generates. It is the only migrate subcommand safe to point at production.
-CMD ["prisma", "migrate", "deploy"]
+CMD ["node", "migrate.cjs"]

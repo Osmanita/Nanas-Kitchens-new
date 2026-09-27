@@ -1,0 +1,17 @@
+\getenv app_password APP_DB_PASSWORD
+BEGIN;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'nanas_app') THEN
+    CREATE ROLE nanas_app LOGIN;
+  END IF;
+END $$;
+SELECT format('ALTER ROLE nanas_app WITH LOGIN PASSWORD %L', :'app_password') \gexec
+SELECT format('GRANT CONNECT ON DATABASE %I TO nanas_app', current_database()) \gexec
+REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+GRANT USAGE ON SCHEMA public TO nanas_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO nanas_app;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO nanas_app;
+REVOKE ALL ON TABLE public."_prisma_migrations" FROM nanas_app;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO nanas_app;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO nanas_app;
+COMMIT;

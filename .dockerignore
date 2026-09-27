@@ -11,6 +11,7 @@
 **/node_modules
 **/dist
 **/.next
+**/.next-build
 **/target
 **/coverage
 **/*.tsbuildinfo
@@ -34,6 +35,11 @@ apps/mobile
 **/Thumbs.db
 
 # Docs and scratch
+.tmp*/
+**/.env
+**/.env.*
+!**/.env.example
+infra/
 docs
 *.md
 !README.md

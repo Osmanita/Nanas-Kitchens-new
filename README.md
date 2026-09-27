@@ -136,3 +136,8 @@ pazar temasının koyu metin rengini taşıdığı için kart başlıkları koyu
   cd apps/web
   WATCHPACK_POLLING=true npm run dev -- -p 3010
   ```
+
+## AWS ECS deployment
+
+For `nanaskitchens.app`, use the [ECS Fargate setup guide](infra/ecs/README.md).
+It includes CloudFormation templates, Cloudflare DNS setup and migration-first releases.

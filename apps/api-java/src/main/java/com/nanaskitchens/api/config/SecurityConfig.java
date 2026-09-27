@@ -42,7 +42,7 @@ public class SecurityConfig {
                         // here aborts the committed response mid-stream.
                         .dispatcherTypeMatchers(jakarta.servlet.DispatcherType.ASYNC)
                         .permitAll()
-                        .requestMatchers("/", "/health", "/error", "/auth/register", "/auth/login", "/auth/refresh")
+                        .requestMatchers("/", "/health", "/health/live", "/error", "/auth/register", "/auth/login", "/auth/refresh")
                         .permitAll()
                         // search / public profile / published menu are public, like the NestJS service;
                         // seller endpoints under /kitchens/{id}/... (dishes, menu-days) stay authenticated

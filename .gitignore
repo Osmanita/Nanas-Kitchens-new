@@ -42,3 +42,7 @@ skills/
 original-skills/
 skills-lock.json
 .agents/
+
+# Local deployment inputs, secret files and generated CloudFormation output
+infra/**/*.local.*
+infra/**/*.secrets.json

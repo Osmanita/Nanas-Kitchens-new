@@ -1,0 +1,232 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Nanas Kitchens HTTPS web and API services (deploy only after a successful migration)
+Parameters:
+  FoundationStack: {Type: String, Default: nanas-foundation}
+  DomainName: {Type: String, Default: nanaskitchens.app}
+  CertificateArn:
+    Type: String
+    AllowedPattern: 'arn:aws:acm:[a-z0-9-]+:[0-9]{12}:certificate/.+'
+    Description: Issued ACM certificate in this region covering the apex, www and api hostnames
+  WebImage:
+    Type: String
+    AllowedPattern: '.+@sha256:[a-f0-9]{64}'
+  ApiImage:
+    Type: String
+    AllowedPattern: '.+@sha256:[a-f0-9]{64}'
+  DesiredCount:
+    Type: Number
+    Default: 1
+    MinValue: 1
+    MaxValue: 4
+Resources:
+  WebTarget:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      VpcId: {Fn::ImportValue: !Sub '${FoundationStack}-VpcId'}
+      Protocol: HTTP
+      Port: 3000
+      TargetType: ip
+      HealthCheckPath: /health
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 3
+      Matcher: {HttpCode: '200'}
+      TargetGroupAttributes: [{Key: deregistration_delay.timeout_seconds, Value: '30'}]
+  ApiTarget:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      VpcId: {Fn::ImportValue: !Sub '${FoundationStack}-VpcId'}
+      Protocol: HTTP
+      Port: 8080
+      TargetType: ip
+      HealthCheckPath: /health
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 10
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 3
+      Matcher: {HttpCode: '200'}
+      TargetGroupAttributes: [{Key: deregistration_delay.timeout_seconds, Value: '60'}]
+  HttpListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: {Fn::ImportValue: !Sub '${FoundationStack}-LoadBalancerArn'}
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: redirect
+          RedirectConfig: {Protocol: HTTPS, Port: '443', StatusCode: HTTP_301}
+  HttpsListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: {Fn::ImportValue: !Sub '${FoundationStack}-LoadBalancerArn'}
+      Port: 443
+      Protocol: HTTPS
+      Certificates: [{CertificateArn: !Ref CertificateArn}]
+      SslPolicy: ELBSecurityPolicy-TLS13-1-2-2021-06
+      DefaultActions:
+        - Type: fixed-response
+          FixedResponseConfig: {StatusCode: '404', ContentType: text/plain, MessageBody: Unknown host}
+  ApiRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      ListenerArn: !Ref HttpsListener
+      Priority: 1
+      Conditions:
+        - Field: host-header
+          HostHeaderConfig: {Values: [!Sub 'api.${DomainName}']}
+      Actions: [{Type: forward, TargetGroupArn: !Ref ApiTarget}]
+  WebRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      ListenerArn: !Ref HttpsListener
+      Priority: 2
+      Conditions:
+        - Field: host-header
+          HostHeaderConfig: {Values: [!Ref DomainName]}
+      Actions: [{Type: forward, TargetGroupArn: !Ref WebTarget}]
+  WwwRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      ListenerArn: !Ref HttpsListener
+      Priority: 3
+      Conditions:
+        - Field: host-header
+          HostHeaderConfig: {Values: [!Sub 'www.${DomainName}']}
+      Actions:
+        - Type: redirect
+          RedirectConfig: {Host: !Ref DomainName, Protocol: HTTPS, Port: '443', StatusCode: HTTP_301}
+  WebTask:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub '${FoundationStack}-web'
+      RequiresCompatibilities: [FARGATE]
+      NetworkMode: awsvpc
+      Cpu: '256'
+      Memory: '512'
+      RuntimePlatform: {CpuArchitecture: X86_64, OperatingSystemFamily: LINUX}
+      ExecutionRoleArn: {Fn::ImportValue: !Sub '${FoundationStack}-WebExecutionRole'}
+      ContainerDefinitions:
+        - Name: web
+          Image: !Ref WebImage
+          Essential: true
+          StopTimeout: 60
+          PortMappings: [{ContainerPort: 3000, Protocol: tcp}]
+          Environment:
+            - {Name: HOSTNAME, Value: 0.0.0.0}
+            - {Name: PORT, Value: '3000'}
+          HealthCheck:
+            Command: [CMD-SHELL, "node -e \"fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+            Interval: 30
+            Timeout: 5
+            Retries: 3
+            StartPeriod: 30
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-region: !Ref AWS::Region
+              awslogs-group: !Sub '/ecs/${FoundationStack}/web'
+              awslogs-stream-prefix: ecs
+  ApiTask:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub '${FoundationStack}-api'
+      RequiresCompatibilities: [FARGATE]
+      NetworkMode: awsvpc
+      Cpu: '1024'
+      Memory: '2048'
+      RuntimePlatform: {CpuArchitecture: X86_64, OperatingSystemFamily: LINUX}
+      ExecutionRoleArn: {Fn::ImportValue: !Sub '${FoundationStack}-ApiExecutionRole'}
+      TaskRoleArn: {Fn::ImportValue: !Sub '${FoundationStack}-ApiTaskRole'}
+      ContainerDefinitions:
+        - Name: api
+          Image: !Ref ApiImage
+          Essential: true
+          StopTimeout: 60
+          PortMappings: [{ContainerPort: 8080, Protocol: tcp}]
+          Environment:
+            - {Name: SPRING_PROFILES_ACTIVE, Value: ecs}
+            - {Name: AWS_REGION, Value: !Ref AWS::Region}
+            - {Name: WEB_BASE_URL, Value: !Sub 'https://${DomainName}'}
+            - {Name: PUBLIC_BASE_URL, Value: !Sub 'https://api.${DomainName}'}
+            - {Name: DB_HOST, Value: {Fn::ImportValue: !Sub '${FoundationStack}-DatabaseHost'}}
+            - {Name: DB_NAME, Value: culture_eats}
+            - {Name: DB_USER, Value: nanas_app}
+            - {Name: REDIS_HOST, Value: {Fn::ImportValue: !Sub '${FoundationStack}-RedisHost'}}
+            - {Name: S3_BUCKET, Value: {Fn::ImportValue: !Sub '${FoundationStack}-PhotosBucket'}}
+            - {Name: AI_PROVIDER, Value: google-genai}
+            - {Name: DELIVERY_PROVIDER, Value: mock}
+            - {Name: NOTIFICATIONS_CHANNELS, Value: log}
+          Secrets:
+            - Name: DB_PASSWORD
+              ValueFrom: !Join ['', [{Fn::ImportValue: !Sub '${FoundationStack}-AppDatabaseSecret'}, ':password::']]
+            - Name: REDIS_PASSWORD
+              ValueFrom: !Join ['', [{Fn::ImportValue: !Sub '${FoundationStack}-RedisSecret'}, ':password::']]
+            - {Name: JWT_SECRET, ValueFrom: {Fn::ImportValue: !Sub '${FoundationStack}-JwtSecret'}}
+            - {Name: ADDRESS_ENC_KEY, ValueFrom: {Fn::ImportValue: !Sub '${FoundationStack}-AddressSecret'}}
+            - {Name: DELIVERY_WEBHOOK_SECRET, ValueFrom: {Fn::ImportValue: !Sub '${FoundationStack}-DeliverySecret'}}
+            - Name: GEMINI_API_KEY
+              ValueFrom: !Join ['', [{Fn::ImportValue: !Sub '${FoundationStack}-ProviderSecret'}, ':GEMINI_API_KEY::']]
+            - Name: STRIPE_SECRET_KEY
+              ValueFrom: !Join ['', [{Fn::ImportValue: !Sub '${FoundationStack}-ProviderSecret'}, ':STRIPE_SECRET_KEY::']]
+            - Name: STRIPE_PUBLISHABLE_KEY
+              ValueFrom: !Join ['', [{Fn::ImportValue: !Sub '${FoundationStack}-ProviderSecret'}, ':STRIPE_PUBLISHABLE_KEY::']]
+            - Name: STRIPE_WEBHOOK_SECRET
+              ValueFrom: !Join ['', [{Fn::ImportValue: !Sub '${FoundationStack}-ProviderSecret'}, ':STRIPE_WEBHOOK_SECRET::']]
+          HealthCheck:
+            Command: [CMD-SHELL, 'curl --fail --silent http://127.0.0.1:8080/health/live || exit 1']
+            Interval: 30
+            Timeout: 5
+            Retries: 3
+            StartPeriod: 90
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-region: !Ref AWS::Region
+              awslogs-group: !Sub '/ecs/${FoundationStack}/api'
+              awslogs-stream-prefix: ecs
+  WebService:
+    Type: AWS::ECS::Service
+    DependsOn: WebRule
+    Properties:
+      Cluster: {Fn::ImportValue: !Sub '${FoundationStack}-Cluster'}
+      TaskDefinition: !Ref WebTask
+      LaunchType: FARGATE
+      PlatformVersion: '1.4.0'
+      DesiredCount: !Ref DesiredCount
+      HealthCheckGracePeriodSeconds: 120
+      DeploymentConfiguration:
+        MinimumHealthyPercent: 100
+        MaximumPercent: 200
+        DeploymentCircuitBreaker: {Enable: true, Rollback: true}
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          Subnets: !Split [',', {Fn::ImportValue: !Sub '${FoundationStack}-PrivateSubnets'}]
+          SecurityGroups: [{Fn::ImportValue: !Sub '${FoundationStack}-WebSecurityGroup'}]
+      LoadBalancers: [{ContainerName: web, ContainerPort: 3000, TargetGroupArn: !Ref WebTarget}]
+  ApiService:
+    Type: AWS::ECS::Service
+    DependsOn: ApiRule
+    Properties:
+      Cluster: {Fn::ImportValue: !Sub '${FoundationStack}-Cluster'}
+      TaskDefinition: !Ref ApiTask
+      LaunchType: FARGATE
+      PlatformVersion: '1.4.0'
+      DesiredCount: !Ref DesiredCount
+      HealthCheckGracePeriodSeconds: 120
+      DeploymentConfiguration:
+        MinimumHealthyPercent: 100
+        MaximumPercent: 200
+        DeploymentCircuitBreaker: {Enable: true, Rollback: true}
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          Subnets: !Split [',', {Fn::ImportValue: !Sub '${FoundationStack}-PrivateSubnets'}]
+          SecurityGroups: [{Fn::ImportValue: !Sub '${FoundationStack}-ApiSecurityGroup'}]
+      LoadBalancers: [{ContainerName: api, ContainerPort: 8080, TargetGroupArn: !Ref ApiTarget}]
+Outputs:
+  WebUrl: {Value: !Sub 'https://${DomainName}'}
+  ApiUrl: {Value: !Sub 'https://api.${DomainName}'}
+  WebService: {Value: !GetAtt WebService.Name}
+  ApiService: {Value: !GetAtt ApiService.Name}

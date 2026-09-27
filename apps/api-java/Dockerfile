@@ -36,6 +36,12 @@ RUN --mount=type=cache,target=/root/.m2 sh ./mvnw -B -DskipTests package
 # extra ~40 MB is not worth debugging a glibc/musl difference in production.
 FROM eclipse-temurin:21-jre-noble AS runtime
 
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
+ && rm -rf /var/lib/apt/lists/* \
+ && curl --fail --silent --show-error --location \
+      https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem \
+      --output /etc/ssl/certs/rds-ca-bundle.pem
+
 RUN groupadd --system --gid 10001 app \
  && useradd --system --uid 10001 --gid app --create-home app
 
@@ -53,6 +59,8 @@ ENV UPLOADS_DIR=/app/uploads
 
 USER app
 EXPOSE 8080
+HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --retries=3 \
+  CMD curl --fail --silent http://127.0.0.1:8080/health/live || exit 1
 
 # MaxRAMPercentage instead of a fixed -Xmx: the JVM then sizes itself from the ECS task
 # memory limit, so changing the task definition is enough — no image rebuild.

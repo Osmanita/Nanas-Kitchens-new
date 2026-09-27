@@ -1,0 +1,484 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Nanas Kitchens - private Fargate network, durable data, images and execution roles
+Parameters:
+  HighlyAvailable:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['true', 'false']
+    Description: Adds a second NAT, a Redis replica and RDS Multi-AZ; increases running cost.
+  DatabaseClass:
+    Type: String
+    Default: db.t4g.micro
+  DatabaseVersion:
+    Type: String
+    Default: '16.15'
+    AllowedPattern: '16\.[0-9]+(-R[0-9]+)?'
+  CacheNodeType:
+    Type: String
+    Default: cache.t4g.micro
+Conditions:
+  HA: !Equals [!Ref HighlyAvailable, 'true']
+Resources:
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.42.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+  GatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref Vpc
+      InternetGatewayId: !Ref InternetGateway
+  PublicA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.42.0.0/24
+      AvailabilityZone: !Select [0, !GetAZs '']
+  PublicB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.42.1.0/24
+      AvailabilityZone: !Select [1, !GetAZs '']
+  PrivateA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.42.10.0/24
+      AvailabilityZone: !Select [0, !GetAZs '']
+  PrivateB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.42.11.0/24
+      AvailabilityZone: !Select [1, !GetAZs '']
+  PublicRoutes:
+    Type: AWS::EC2::RouteTable
+    Properties: {VpcId: !Ref Vpc}
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: GatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRoutes
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+  PublicAssociationA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: {SubnetId: !Ref PublicA, RouteTableId: !Ref PublicRoutes}
+  PublicAssociationB:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: {SubnetId: !Ref PublicB, RouteTableId: !Ref PublicRoutes}
+  NatAddressA:
+    Type: AWS::EC2::EIP
+    DependsOn: GatewayAttachment
+    Properties: {Domain: vpc}
+  NatA:
+    Type: AWS::EC2::NatGateway
+    Properties: {AllocationId: !GetAtt NatAddressA.AllocationId, SubnetId: !Ref PublicA}
+  NatAddressB:
+    Type: AWS::EC2::EIP
+    Condition: HA
+    DependsOn: GatewayAttachment
+    Properties: {Domain: vpc}
+  NatB:
+    Type: AWS::EC2::NatGateway
+    Condition: HA
+    Properties: {AllocationId: !GetAtt NatAddressB.AllocationId, SubnetId: !Ref PublicB}
+  PrivateRoutesA:
+    Type: AWS::EC2::RouteTable
+    Properties: {VpcId: !Ref Vpc}
+  PrivateRoutesB:
+    Type: AWS::EC2::RouteTable
+    Properties: {VpcId: !Ref Vpc}
+  PrivateRouteA:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRoutesA
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatA
+  PrivateRouteB:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRoutesB
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !If [HA, !Ref NatB, !Ref NatA]
+  PrivateAssociationA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: {SubnetId: !Ref PrivateA, RouteTableId: !Ref PrivateRoutesA}
+  PrivateAssociationB:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: {SubnetId: !Ref PrivateB, RouteTableId: !Ref PrivateRoutesB}
+  S3Endpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref Vpc
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.s3
+      RouteTableIds: [!Ref PrivateRoutesA, !Ref PrivateRoutesB]
+      VpcEndpointType: Gateway
+  LoadBalancerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Public HTTPS and HTTP-to-HTTPS redirect
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - {IpProtocol: tcp, FromPort: 443, ToPort: 443, CidrIp: 0.0.0.0/0}
+        - {IpProtocol: tcp, FromPort: 80, ToPort: 80, CidrIp: 0.0.0.0/0}
+  WebSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Web accepts traffic only from the ALB
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3000
+          ToPort: 3000
+          SourceSecurityGroupId: !Ref LoadBalancerSecurityGroup
+  ApiSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: API accepts traffic only from the ALB
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          SourceSecurityGroupId: !Ref LoadBalancerSecurityGroup
+  MigrationSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Migration tasks have no inbound access
+      VpcId: !Ref Vpc
+  DatabaseSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Database is private to API and migrations
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - {IpProtocol: tcp, FromPort: 5432, ToPort: 5432, SourceSecurityGroupId: !Ref ApiSecurityGroup}
+        - {IpProtocol: tcp, FromPort: 5432, ToPort: 5432, SourceSecurityGroupId: !Ref MigrationSecurityGroup}
+  CacheSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Redis is private to API tasks
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - {IpProtocol: tcp, FromPort: 6379, ToPort: 6379, SourceSecurityGroupId: !Ref ApiSecurityGroup}
+  LoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Scheme: internet-facing
+      Type: application
+      Subnets: [!Ref PublicA, !Ref PublicB]
+      SecurityGroups: [!Ref LoadBalancerSecurityGroup]
+      LoadBalancerAttributes:
+        - {Key: idle_timeout.timeout_seconds, Value: '120'}
+        - {Key: routing.http.drop_invalid_header_fields.enabled, Value: 'true'}
+  DatabaseSubnets:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Private database subnets
+      SubnetIds: [!Ref PrivateA, !Ref PrivateB]
+  DatabaseParameters:
+    Type: AWS::RDS::DBParameterGroup
+    Properties:
+      Family: postgres16
+      Description: Require encrypted database connections
+      Parameters: {rds.force_ssl: '1'}
+  Database:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Snapshot
+    UpdateReplacePolicy: Snapshot
+    Properties:
+      Engine: postgres
+      EngineVersion: !Ref DatabaseVersion
+      DBInstanceClass: !Ref DatabaseClass
+      DBName: culture_eats
+      MasterUsername: nanas_admin
+      ManageMasterUserPassword: true
+      DBSubnetGroupName: !Ref DatabaseSubnets
+      DBParameterGroupName: !Ref DatabaseParameters
+      VPCSecurityGroups: [!Ref DatabaseSecurityGroup]
+      AllocatedStorage: '20'
+      MaxAllocatedStorage: 100
+      StorageType: gp3
+      StorageEncrypted: true
+      PubliclyAccessible: false
+      MultiAZ: !If [HA, true, false]
+      BackupRetentionPeriod: 7
+      DeletionProtection: true
+      CopyTagsToSnapshot: true
+  AppDatabaseSecret:
+    Type: AWS::SecretsManager::Secret
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Description: Restricted application database credentials (created by the migration task)
+      GenerateSecretString:
+        SecretStringTemplate: '{"username":"nanas_app"}'
+        GenerateStringKey: password
+        PasswordLength: 40
+        ExcludePunctuation: true
+  RedisSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      GenerateSecretString:
+        SecretStringTemplate: '{}'
+        GenerateStringKey: password
+        PasswordLength: 40
+        ExcludePunctuation: true
+  CacheSubnets:
+    Type: AWS::ElastiCache::SubnetGroup
+    Properties:
+      Description: Private cache subnets
+      SubnetIds: [!Ref PrivateA, !Ref PrivateB]
+  Cache:
+    Type: AWS::ElastiCache::ReplicationGroup
+    Properties:
+      ReplicationGroupDescription: Nanas portions pubsub and delivery quotes
+      Engine: redis
+      EngineVersion: '7.1'
+      CacheNodeType: !Ref CacheNodeType
+      NumCacheClusters: !If [HA, 2, 1]
+      AutomaticFailoverEnabled: !If [HA, true, false]
+      MultiAZEnabled: !If [HA, true, false]
+      TransitEncryptionEnabled: true
+      AtRestEncryptionEnabled: true
+      AuthToken: !Sub '{{resolve:secretsmanager:${RedisSecret}:SecretString:password}}'
+      CacheSubnetGroupName: !Ref CacheSubnets
+      SecurityGroupIds: [!Ref CacheSecurityGroup]
+  Photos:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules: [{ObjectOwnership: BucketOwnerEnforced}]
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: {SSEAlgorithm: AES256}
+      VersioningConfiguration: {Status: Enabled}
+  PhotosPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref Photos
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Deny
+            Principal: '*'
+            Action: s3:*
+            Resource: [!GetAtt Photos.Arn, !Sub '${Photos.Arn}/*']
+            Condition: {Bool: {'aws:SecureTransport': 'false'}}
+  JwtSecret:
+    Type: AWS::SecretsManager::Secret
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      GenerateSecretString: {PasswordLength: 64, ExcludePunctuation: true}
+  AddressSecret:
+    Type: AWS::SecretsManager::Secret
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Description: Keep this key for the lifetime of the database; encrypted addresses depend on it
+      GenerateSecretString: {PasswordLength: 64, ExcludePunctuation: true}
+  DeliverySecret:
+    Type: AWS::SecretsManager::Secret
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      GenerateSecretString: {PasswordLength: 64, ExcludePunctuation: true}
+  ProviderSecret:
+    Type: AWS::SecretsManager::Secret
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Description: Populate GEMINI_API_KEY, STRIPE_SECRET_KEY, STRIPE_PUBLISHABLE_KEY and STRIPE_WEBHOOK_SECRET before deploying
+  WebRepository:
+    Type: AWS::ECR::Repository
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      RepositoryName: !Sub '${AWS::StackName}/web'
+      ImageTagMutability: IMMUTABLE
+      ImageScanningConfiguration: {ScanOnPush: true}
+  ApiRepository:
+    Type: AWS::ECR::Repository
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      RepositoryName: !Sub '${AWS::StackName}/api'
+      ImageTagMutability: IMMUTABLE
+      ImageScanningConfiguration: {ScanOnPush: true}
+  MigrationRepository:
+    Type: AWS::ECR::Repository
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      RepositoryName: !Sub '${AWS::StackName}/migrate'
+      ImageTagMutability: IMMUTABLE
+      ImageScanningConfiguration: {ScanOnPush: true}
+  Cluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      CapacityProviders: [FARGATE]
+      ClusterSettings: [{Name: containerInsights, Value: enabled}]
+  WebLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/ecs/${AWS::StackName}/web'
+      RetentionInDays: 14
+  ApiLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/ecs/${AWS::StackName}/api'
+      RetentionInDays: 14
+  MigrationLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/ecs/${AWS::StackName}/migrate'
+      RetentionInDays: 14
+  WebExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: ecs-tasks.amazonaws.com}
+            Action: sts:AssumeRole
+      ManagedPolicyArns: [!Sub 'arn:${AWS::Partition}:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy']
+  ApiExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: ecs-tasks.amazonaws.com}
+            Action: sts:AssumeRole
+      ManagedPolicyArns: [!Sub 'arn:${AWS::Partition}:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy']
+      Policies:
+        - PolicyName: ApplicationSecrets
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: [!Ref AppDatabaseSecret, !Ref RedisSecret, !Ref JwtSecret, !Ref AddressSecret, !Ref DeliverySecret, !Ref ProviderSecret]
+  MigrationExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: ecs-tasks.amazonaws.com}
+            Action: sts:AssumeRole
+      ManagedPolicyArns: [!Sub 'arn:${AWS::Partition}:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy']
+      Policies:
+        - PolicyName: MigrationSecrets
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: [!GetAtt Database.MasterUserSecret.SecretArn, !Ref AppDatabaseSecret]
+  ApiTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: ecs-tasks.amazonaws.com}
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: KitchenPhotos
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: [s3:GetObject, s3:PutObject]
+                Resource: !Sub '${Photos.Arn}/photos/*'
+Outputs:
+  VpcId:
+    Value: !Ref Vpc
+    Export: {Name: !Sub '${AWS::StackName}-VpcId'}
+  PrivateSubnets:
+    Value: !Join [',', [!Ref PrivateA, !Ref PrivateB]]
+    Export: {Name: !Sub '${AWS::StackName}-PrivateSubnets'}
+  Cluster:
+    Value: !Ref Cluster
+    Export: {Name: !Sub '${AWS::StackName}-Cluster'}
+  LoadBalancerArn:
+    Value: !Ref LoadBalancer
+    Export: {Name: !Sub '${AWS::StackName}-LoadBalancerArn'}
+  LoadBalancerDns:
+    Value: !GetAtt LoadBalancer.DNSName
+  WebSecurityGroup:
+    Value: !Ref WebSecurityGroup
+    Export: {Name: !Sub '${AWS::StackName}-WebSecurityGroup'}
+  ApiSecurityGroup:
+    Value: !Ref ApiSecurityGroup
+    Export: {Name: !Sub '${AWS::StackName}-ApiSecurityGroup'}
+  MigrationSecurityGroup:
+    Value: !Ref MigrationSecurityGroup
+    Export: {Name: !Sub '${AWS::StackName}-MigrationSecurityGroup'}
+  DatabaseHost:
+    Value: !GetAtt Database.Endpoint.Address
+    Export: {Name: !Sub '${AWS::StackName}-DatabaseHost'}
+  DatabaseAdminSecret:
+    Value: !GetAtt Database.MasterUserSecret.SecretArn
+    Export: {Name: !Sub '${AWS::StackName}-DatabaseAdminSecret'}
+  AppDatabaseSecret:
+    Value: !Ref AppDatabaseSecret
+    Export: {Name: !Sub '${AWS::StackName}-AppDatabaseSecret'}
+  RedisHost:
+    Value: !GetAtt Cache.PrimaryEndPoint.Address
+    Export: {Name: !Sub '${AWS::StackName}-RedisHost'}
+  RedisSecret:
+    Value: !Ref RedisSecret
+    Export: {Name: !Sub '${AWS::StackName}-RedisSecret'}
+  PhotosBucket:
+    Value: !Ref Photos
+    Export: {Name: !Sub '${AWS::StackName}-PhotosBucket'}
+  JwtSecret:
+    Value: !Ref JwtSecret
+    Export: {Name: !Sub '${AWS::StackName}-JwtSecret'}
+  AddressSecret:
+    Value: !Ref AddressSecret
+    Export: {Name: !Sub '${AWS::StackName}-AddressSecret'}
+  DeliverySecret:
+    Value: !Ref DeliverySecret
+    Export: {Name: !Sub '${AWS::StackName}-DeliverySecret'}
+  ProviderSecret:
+    Value: !Ref ProviderSecret
+    Export: {Name: !Sub '${AWS::StackName}-ProviderSecret'}
+  WebRepository:
+    Value: !GetAtt WebRepository.RepositoryUri
+  ApiRepository:
+    Value: !GetAtt ApiRepository.RepositoryUri
+  MigrationRepository:
+    Value: !GetAtt MigrationRepository.RepositoryUri
+  WebExecutionRole:
+    Value: !GetAtt WebExecutionRole.Arn
+    Export: {Name: !Sub '${AWS::StackName}-WebExecutionRole'}
+  ApiExecutionRole:
+    Value: !GetAtt ApiExecutionRole.Arn
+    Export: {Name: !Sub '${AWS::StackName}-ApiExecutionRole'}
+  MigrationExecutionRole:
+    Value: !GetAtt MigrationExecutionRole.Arn
+    Export: {Name: !Sub '${AWS::StackName}-MigrationExecutionRole'}
+  ApiTaskRole:
+    Value: !GetAtt ApiTaskRole.Arn
+    Export: {Name: !Sub '${AWS::StackName}-ApiTaskRole'}

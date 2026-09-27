@@ -4,7 +4,7 @@
 #
 # Build from the REPO ROOT, not from this directory:
 #   docker build -f apps/web/Dockerfile \
-#     --build-arg NEXT_PUBLIC_API_URL=https://api.example.com \
+#     --build-arg NEXT_PUBLIC_API_URL=https://api.nanaskitchens.app \
 #     -t nanas/web .
 #
 # !! NEXT_PUBLIC_API_URL IS BAKED IN AT BUILD TIME (apps/web/lib/api.ts:7).
@@ -35,7 +35,7 @@ RUN pnpm install --frozen-lockfile --filter web...
 
 # ---------- build ----------
 FROM deps AS build
-ARG NEXT_PUBLIC_API_URL
+ARG NEXT_PUBLIC_API_URL=https://api.nanaskitchens.app
 ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
 ENV NEXT_TELEMETRY_DISABLED=1
 # Opts next.config.ts into output: "standalone". It is gated behind this variable
@@ -60,12 +60,14 @@ ENV PORT=3000
 # outputFileTracingRoot is the repo root, so standalone/ mirrors the workspace layout
 # and the entrypoint lands at apps/web/server.js. Static assets and public/ are NOT
 # included in standalone output — Next expects them copied in beside it.
-COPY --from=build /repo/apps/web/.next/standalone ./
-COPY --from=build /repo/apps/web/.next/static ./apps/web/.next/static
-COPY --from=build /repo/apps/web/public ./apps/web/public
+COPY --from=build --chown=node:node /repo/apps/web/.next/standalone ./
+COPY --from=build --chown=node:node /repo/apps/web/.next/static ./apps/web/.next/static
+COPY --from=build --chown=node:node /repo/apps/web/public ./apps/web/public
 
 # `node` (uid 1000) ships with the image; nothing here is written at runtime.
 USER node
 EXPOSE 3000
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
 CMD ["node", "apps/web/server.js"]
