@@ -51,6 +51,13 @@ export default tseslint.config(
     },
   },
 
+  // Explicit CommonJS entry points use require; keep the rule enabled for application code.
+  {
+    files: ["**/*.cjs"],
+    languageOptions: { sourceType: "commonjs" },
+    rules: { "@typescript-eslint/no-require-imports": "off" },
+  },
+
   // Next.js app: browser globals plus the framework's own correctness rules.
   {
     files: ["apps/web/**/*.{ts,tsx,js,jsx}"],

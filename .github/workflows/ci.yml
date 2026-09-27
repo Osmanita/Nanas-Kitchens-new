@@ -53,6 +53,9 @@ jobs:
   # never compiled or tested in CI at all, and a green tick said nothing about it.
   java:
     runs-on: ubuntu-latest
+    env:
+      # MinIO RELEASE.2025-10-15T17-29-55Z, pinned to its source commit.
+      MINIO_COMMIT: 9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a
     services:
       # PostGIS, not plain postgres: the raw-SQL search path calls ST_DWithin/ST_MakePoint,
       # and the integration tests replay the Prisma migrations, which enable the extension.
@@ -83,20 +86,40 @@ jobs:
           distribution: temurin
           java-version: 21
           cache: maven
-      # MinIO gives S3PhotoStorageIntegrationTest a real S3 API to check the storage provider
-      # against. Not a service container: the minio image needs a `server /data` argument and
-      # service containers have no way to pass one. Without TEST_S3_ENDPOINT those tests skip
-      # themselves - loudly, as skipped, never as passed - so this step is what makes them run.
+      # The community MinIO images/binaries are no longer published. Build the official
+      # source so S3PhotoStorageIntegrationTest still checks a real server and signatures.
+      - name: Cache MinIO test server
+        id: minio-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/minio-bin
+          key: minio-${{ runner.os }}-${{ runner.arch }}-go1.24.8-${{ env.MINIO_COMMIT }}
+      - uses: actions/setup-go@v5
+        if: steps.minio-cache.outputs.cache-hit != 'true'
+        with:
+          go-version: '1.24.8'
+          cache: false
+      - name: Build MinIO test server
+        if: steps.minio-cache.outputs.cache-hit != 'true'
+        env:
+          GOBIN: ${{ runner.temp }}/minio-bin
+          GOTOOLCHAIN: local
+          CGO_ENABLED: '0'
+        run: go install github.com/minio/minio@"$MINIO_COMMIT"
       - name: Start MinIO
+        env:
+          MINIO_ROOT_USER: minioadmin
+          MINIO_ROOT_PASSWORD: minioadmin
         run: |
-          docker run -d --name minio -p 9000:9000             -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin             minio/minio:latest server /data
+          "$RUNNER_TEMP/minio-bin/minio" server "$RUNNER_TEMP/minio-data" \
+            --address 127.0.0.1:9000 > "$RUNNER_TEMP/minio.log" 2>&1 &
           for i in $(seq 1 30); do
             if curl -sf http://localhost:9000/minio/health/live > /dev/null; then
               echo "MinIO is up"; exit 0
             fi
             sleep 2
           done
-          echo "MinIO never became healthy"; docker logs minio; exit 1
+          echo "MinIO never became healthy"; cat "$RUNNER_TEMP/minio.log"; exit 1
       # mvnw is stored with LF and mode 100755, so it runs as-is on a Linux runner.
       # The whole suite runs now, *IntegrationTest included: IntegrationTest prefers
       # TEST_DATABASE_URL over Testcontainers, so it uses the service container above and
