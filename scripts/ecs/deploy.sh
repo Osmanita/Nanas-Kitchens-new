@@ -12,7 +12,9 @@ for command in aws docker jq git; do
   command -v "$command" >/dev/null || { echo "Missing tool: $command" >&2; exit 1; }
 done
 test -f infra/ecs/foundation.yml || { echo 'Run from the repository root.' >&2; exit 1; }
-git diff --quiet && git diff --cached --quiet || { echo 'Commit tracked changes before publishing an image.' >&2; exit 1; }
+if ! git diff --quiet || ! git diff --cached --quiet; then
+  echo 'Commit tracked changes before publishing an image.' >&2; exit 1
+fi
 commit="$(git rev-parse HEAD)"
 tag="${IMAGE_TAG:-${commit:0:12}-${domain//./-}}"
 [[ "$tag" =~ ^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127}$ ]] || { echo 'Invalid IMAGE_TAG' >&2; exit 1; }

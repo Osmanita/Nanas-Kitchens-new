@@ -137,7 +137,9 @@ başlatmaz. Yeni görev sağlıksızsa ECS circuit breaker son sağlıklı sür�
 Şema geri alınmaz; migration'lar eski uygulama sürümüyle uyumlu olmalıdır.
 İlk kurulumda önceki sürüm bulunmadığından başarısız deploy düzeltilip yeniden denenir.
 
-CI `ECS readiness` üç Docker imajını ve CloudFormation şemalarını kontrol eder;
+CI `ECS readiness` üç Docker imajını ve CloudFormation şemalarını kontrol eder.
+Geçici container'larda HTTPS/TLS veritabanı bağlantısını, migration ve sınırlı DB rolünü,
+Redis TLS bağlantısını ve Redis kesilince readiness/liveness ayrımını da dener.
 AWS'ye yayın yapmaz. RDS yedi günlük yedek tutar ve silme koruması açıktır.
 S3 fotoğrafları sürümlenir; bucket, ECR ve kritik secret'lar stack silinse de korunur.
 Silme işlemi bu kaynakların maliyetini otomatik olarak sonlandırmaz.
