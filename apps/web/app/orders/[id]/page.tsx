@@ -249,14 +249,16 @@ export default function OrderPage() {
               order.fulfillment === "pickup" &&
               order.pickupAddress && (
                 <div className={styles.note}>
-                  <strong>Order received.</strong>
-                  <p>Collect your meal {order.pickupTimeZone
+                  <strong>{order.status === "completed" ? "Pickup completed." : "Order received."}</strong>
+                  {order.status === "completed" ? (
+                    <p>Your kitchen marked this order as collected.</p>
+                  ) : <p>Collect your meal {order.pickupTimeZone
                     ? pickupDay(order.readySlot.slice(0, 10), order.pickupTimeZone)
-                    : readySlot.toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" })} at {order.readySlot.slice(11, 16)} (kitchen time).</p>
+                    : readySlot.toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" })} at {order.readySlot.slice(11, 16)} (kitchen time).</p>}
                   <strong>Pickup address</strong>
                   <br />
                   <address style={{ fontStyle: "normal" }}>{order.pickupAddress}</address>
-                  <p><a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(order.pickupAddress)}`} target="_blank" rel="noreferrer">Get directions →</a></p>
+                  {order.status !== "completed" && <p><a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(order.pickupAddress)}`} target="_blank" rel="noreferrer">Get directions →</a></p>}
                 </div>
               )}
             {!closed &&

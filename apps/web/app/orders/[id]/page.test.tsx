@@ -64,4 +64,17 @@ describe("order detail", () => {
     ).not.toBeInTheDocument();
     expect(screen.getByText("Total").parentElement).toHaveTextContent("$14.00");
   });
+  it("stops asking the buyer to collect a completed pickup order", async () => {
+    vi.mocked(apiFetch).mockImplementation(async (path) =>
+      path.endsWith("/review")
+        ? new Response("{}", { status: 404 })
+        : new Response(JSON.stringify({ ...order, status: "completed" })),
+    );
+    render(<OrderPage />);
+    await screen.findByText("Pickup completed.");
+    expect(screen.getByText("Your kitchen marked this order as collected.")).toBeInTheDocument();
+    expect(screen.queryByText(/Collect your meal/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /Get directions/ })).not.toBeInTheDocument();
+    expect(screen.getByText(order.pickupAddress)).toBeInTheDocument();
+  });
 });
