@@ -12,6 +12,9 @@ function isSafeNext(next: string | null): next is string {
   return !!next && next.startsWith("/") && next[1] !== "/" && next[1] !== "\\";
 }
 
+import styles from "../marketplace.module.css";
+import Icon from "../components/Icon";
+
 export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -24,96 +27,81 @@ export default function LoginPage() {
     setError(null);
     setBusy(true);
     try {
-      await login(email, password);
+      const session = await login(email, password);
       const next = new URLSearchParams(window.location.search).get("next");
-      router.push(isSafeNext(next) ? next : "/");
+      router.push(isSafeNext(next) ? next : session.role === "seller" ? "/seller" : "/");
     } catch (err) {
-      setError(err instanceof Error && err.message === "INVALID_CREDENTIALS"
-        ? "Email or password is incorrect."
-        : "Could not log in. Please try again.");
+      setError(
+        err instanceof Error && err.message === "INVALID_CREDENTIALS"
+          ? "Email or password is incorrect."
+          : "Could not log in. Please try again.",
+      );
     } finally {
       setBusy(false);
     }
   }
 
-  const fieldStyle: React.CSSProperties = {
-    display: "block",
-    width: "100%",
-    padding: "12px 14px",
-    margin: "6px 0 16px",
-    border: "1px solid var(--line)",
-    borderRadius: 12,
-    fontSize: 15,
-    background: "var(--surface)",
-    color: "var(--text)",
-  };
-
   return (
-    <main
-      style={{ maxWidth: 440, margin: "0 auto", padding: "8vh 20px", position: "relative" }}
-    >
-      <div className="hero-glow" aria-hidden="true" style={{ opacity: 0.5 }} />
-      <div className="fade-up" style={{ textAlign: "center", marginBottom: 24 }}>
-        <div className="halo-orb" style={{ margin: "0 auto 18px" }}>
-          N
-        </div>
-        <h1 style={{ fontSize: "clamp(24px, 4vw, 30px)", fontWeight: 700, letterSpacing: "-0.03em", margin: "0 0 6px" }}>
-          Welcome <span className="hero-em">back</span>
-        </h1>
-        <p style={{ color: "var(--text-2)", fontSize: 15, margin: 0 }}>Real food. Made by neighbors.</p>
-      </div>
-
-      <div className="shell fade-up" style={{ animationDelay: "90ms" }}>
-        <div className="shell-core" style={{ padding: "28px 26px" }}>
-          {error && (
-            <div
-              role="alert"
-              style={{
-                background: "#fef2f2",
-                color: "#b91c1c",
-                border: "1px solid #fecaca",
-                borderRadius: 12,
-                padding: "10px 14px",
-                marginBottom: 16,
-                fontSize: 14,
-              }}
-            >
-              {error}
-            </div>
-          )}
-          <form onSubmit={onSubmit}>
-            <label htmlFor="email" style={{ fontSize: 13.5, color: "var(--text-2)", fontWeight: 600 }}>
-              Email
-            </label>
-            <input
-              id="email"
-              type="email"
-              required
-              autoComplete="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              style={fieldStyle}
-            />
-            <label htmlFor="password" style={{ fontSize: 13.5, color: "var(--text-2)", fontWeight: 600 }}>
-              Password
-            </label>
-            <input
-              id="password"
-              type="password"
-              required
-              autoComplete="current-password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              style={fieldStyle}
-            />
-            <button className="btn btn-primary" type="submit" disabled={busy} style={{ width: "100%" }}>
-              {busy ? "Logging in…" : "Log in"}
-            </button>
-          </form>
-          <p style={{ marginTop: 18, fontSize: 14, color: "var(--text-2)", textAlign: "center" }}>
-            New here? <Link href="/register">Create an account</Link>
+    <main className={styles.auth}>
+      <aside className={styles.authVisual}>
+        <img
+          src="/dishes/sarma.jpg"
+          alt="Home-cooked stuffed vegetables, ready to share"
+        />
+        <div className={styles.authStory}>
+          <h2>
+            A familiar recipe.
+            <br />A new connection.
+          </h2>
+          <p>
+            Good food brings a neighborhood together. There’s a place for you at
+            Nana’s table.
           </p>
         </div>
+      </aside>
+      <div className={styles.authForm}>
+        <span className={styles.eyebrow}>Your seat is saved</span>
+        <h1 className={styles.title}>Welcome back.</h1>
+        <p className={styles.subtitle}>
+          Your favorite kitchens are just around the corner.
+        </p>
+        {error && (
+          <div className="form-error" role="alert">
+            {error}
+          </div>
+        )}
+        <form onSubmit={onSubmit}>
+          <label htmlFor="email">Email address</label>
+          <input
+            id="email"
+            className="field"
+            type="email"
+            required
+            autoComplete="email"
+            placeholder="you@example.com"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+          />
+          <label htmlFor="password">Password</label>
+          <input
+            id="password"
+            className="field"
+            type="password"
+            required
+            autoComplete="current-password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+          />
+          <button className="btn-primary" type="submit" disabled={busy}>
+            {busy ? "Logging in…" : "Log in"}
+          </button>
+        </form>
+        <p className={styles.authFoot}>
+          New around here? <Link href="/register">Create an account</Link>
+        </p>
+        <Link href="/" className={styles.textLink}>
+          Explore kitchens <Icon name="arrow" width={16} />
+        </Link>
       </div>
     </main>
   );

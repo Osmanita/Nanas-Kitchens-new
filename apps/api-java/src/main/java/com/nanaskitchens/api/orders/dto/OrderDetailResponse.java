@@ -28,6 +28,7 @@ public record OrderDetailResponse(
         List<Item> items,
         String kitchenName,
         String pickupAddress,
+        String pickupTimeZone,
         Map<String, Object> deliveryJob) {
 
     public record Item(

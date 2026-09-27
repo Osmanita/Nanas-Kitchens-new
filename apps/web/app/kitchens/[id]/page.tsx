@@ -19,6 +19,8 @@ import {
   subscribeCart,
 } from "../../../lib/cart";
 
+import styles from "../../marketplace.module.css";
+
 interface KitchenProfile {
   id: string;
   name: string;
@@ -69,16 +71,6 @@ interface Review {
   createdAt: string;
 }
 
-interface Poll {
-  id: string;
-  question: string;
-  options: string[];
-  tallies: number[];
-  totalVotes: number;
-  closed: boolean;
-  myVote: number | null;
-}
-
 interface HealthReport {
   id: string;
   fileUrl: string;
@@ -93,7 +85,6 @@ export default function KitchenProfilePage() {
   const [remaining, setRemaining] = useState<Record<string, number>>({});
   const [cart, setCart] = useState<Cart | null>(null);
   const [reviews, setReviews] = useState<Review[]>([]);
-  const [polls, setPolls] = useState<Poll[]>([]);
   const [healthReports, setHealthReports] = useState<HealthReport[]>([]);
 
   useEffect(() => {
@@ -114,11 +105,6 @@ export default function KitchenProfilePage() {
     fetch(`${API}/kitchens/${id}/reviews`)
       .then((res) => (res.ok ? res.json() : []))
       .then((body) => !cancelled && setReviews(body))
-      .catch(() => {});
-    // apiFetch attaches the token when present so each poll carries the buyer's own vote.
-    apiFetch(`/kitchens/${id}/polls`)
-      .then((res) => (res.ok ? res.json() : []))
-      .then((body) => !cancelled && setPolls(body))
       .catch(() => {});
     fetch(`${API}/kitchens/${id}/health-reports`)
       .then((res) => (res.ok ? res.json() : []))
@@ -163,7 +149,7 @@ export default function KitchenProfilePage() {
 
   if (profile === "error") {
     return (
-      <main style={{ maxWidth: 720, margin: "0 auto", padding: "32px 24px" }}>
+      <main className={`${styles.page} ${styles.compact}`}>
         <div className="form-error" role="alert">
           Could not load this kitchen. It may not exist.
         </div>
@@ -174,7 +160,7 @@ export default function KitchenProfilePage() {
 
   if (profile === null) {
     return (
-      <main style={{ maxWidth: 720, margin: "0 auto", padding: "32px 24px" }}>
+      <main className={`${styles.page} ${styles.compact}`}>
         <div className="skeleton" style={{ height: 260, marginBottom: 24 }} />
       </main>
     );
@@ -185,13 +171,13 @@ export default function KitchenProfilePage() {
   const cuisineLabel = CUISINE_LABELS[profile.cuisineTag] ?? profile.cuisineTag;
 
   return (
-    <main style={{ maxWidth: 720, margin: "0 auto", padding: "32px 24px" }}>
-      <Link href="/" style={{ fontSize: 14 }}>
+    <main className={`${styles.page} ${styles.compact}`}>
+      <Link href="/" className={styles.back}>
         ‹ Back to nearby kitchens
       </Link>
 
-      <div className="kitchen-photo" style={{ height: 220, marginTop: 12, borderRadius: 16, fontSize: 64 }}>
-        {heroPhoto ? <img src={heroPhoto} alt="" /> : cuisineIcon}
+      <div className={`kitchen-photo ${styles.cover}`}>
+        {heroPhoto ? <img src={heroPhoto} alt={`Food from ${profile.name}`} /> : cuisineIcon}
       </div>
       {profile.photos.length > 1 && (
         <div style={{ display: "flex", gap: 8, marginTop: 8, overflowX: "auto" }}>
@@ -206,7 +192,7 @@ export default function KitchenProfilePage() {
         </div>
       )}
 
-      <h1 style={{ margin: "20px 0 4px", fontSize: 26, color: "var(--brand-green)" }}>{profile.name}</h1>
+      <h1 className={styles.profileTitle}>{profile.name}</h1>
       <div style={{ color: "var(--brand-muted)", fontSize: 14, marginBottom: 10 }}>
         {cuisineIcon} {cuisineLabel} ·{" "}
         {profile.ratingAvg != null ? `★ ${profile.ratingAvg.toFixed(1)} (${profile.ratingCount})` : "New kitchen"}
@@ -246,7 +232,7 @@ export default function KitchenProfilePage() {
         <p style={{ color: "var(--brand-ink)", lineHeight: 1.5 }}>{profile.description}</p>
       )}
 
-      <h2 style={{ fontSize: 20, color: "var(--brand-green)", marginTop: 28 }}>Today&rsquo;s Menu</h2>
+      <h2 style={{ fontSize: 20, color: "var(--brand-green)", marginTop: 28 }}>Today’s menu</h2>
 
       {menu === undefined && (
         <div className="kitchen-grid">
@@ -285,7 +271,7 @@ export default function KitchenProfilePage() {
               return (
                 <div key={item.id} className={`kitchen-card${soldOut ? " sold-out" : ""}`}>
                   <div className="kitchen-photo">
-                    {item.dish.photo ? <img src={item.dish.photo} alt="" loading="lazy" /> : "🍽️"}
+                    {item.dish.photo ? <img src={item.dish.photo} alt={item.dish.name} loading="lazy" /> : "🍽️"}
                   </div>
                   <div style={{ padding: "12px 16px 16px" }}>
                     <strong style={{ fontSize: 16 }}>{item.dish.name}</strong>
@@ -376,33 +362,17 @@ export default function KitchenProfilePage() {
           >
             <span style={{ fontSize: 32 }}>💬</span>
             <span>
-              <strong>Order via the AI Chat Assistant</strong>
+              <strong>A little help choosing?</strong>
               <br />
               <span style={{ color: "var(--brand-muted)", fontSize: 14 }}>
-                Tell it what you&rsquo;d like from {profile.name} and a ready time.
+                Ask Nana what you’d like from {profile.name} and a ready time.
               </span>
             </span>
           </Link>
         </>
       )}
 
-      {/* Story 6.2 (FR17) — active poll cards; buyers vote once. */}
-      {polls.filter((p) => !p.closed).length > 0 && (
-        <>
-          <h2 style={{ fontSize: 20, color: "var(--brand-green)", marginTop: 28 }}>What should {profile.name} cook?</h2>
-          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            {polls
-              .filter((p) => !p.closed)
-              .map((poll) => (
-                <PollCard
-                  key={poll.id}
-                  poll={poll}
-                  onVoted={(updated) => setPolls((ps) => ps.map((p) => (p.id === updated.id ? updated : p)))}
-                />
-              ))}
-          </div>
-        </>
-      )}
+<section className={styles.panel} style={{ marginTop: 28 }}><h2>Help choose tomorrow’s meal</h2><p className={styles.muted}>Vote in nearby kitchen polls and reserve your portions. Payment opens when the cook confirms the menu.</p><Link className={styles.button} href="/voting">Explore tomorrow’s polls →</Link></section>
 
       {/* Story 6.3 (FR18) — buyers ask the kitchen for a dish/cuisine. */}
       <DishRequestPrompt kitchenId={profile.id} kitchenName={profile.name} />
@@ -541,80 +511,6 @@ function DishRequestPrompt({ kitchenId, kitchenName }: { kitchenId: string; kitc
           <Link href={`/login?next=/kitchens/${kitchenId}`}>Log in</Link> as a buyer to request a dish.
         </p>
       )}
-    </div>
-  );
-}
-
-/** Story 6.2 (FR17) — vote once; after voting (or if already voted) results are shown.
- * Sellers and signed-out visitors see results but can't vote. */
-function PollCard({ poll, onVoted }: { poll: Poll; onVoted: (poll: Poll) => void }) {
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const session = getSession();
-  const canVote = session?.role === "buyer" && poll.myVote == null;
-  const showResults = poll.myVote != null || !canVote;
-
-  async function vote(optionIndex: number) {
-    setBusy(true);
-    setError(null);
-    const res = await apiFetch(`/polls/${poll.id}/vote`, {
-      method: "POST",
-      body: JSON.stringify({ optionIndex }),
-    });
-    setBusy(false);
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      setError(body.message === "ALREADY_VOTED" ? "You already voted in this poll." : "Could not record your vote.");
-      return;
-    }
-    onVoted(await res.json());
-  }
-
-  return (
-    <div className="card">
-      <strong style={{ fontSize: 16 }}>{poll.question}</strong>
-      <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 8 }}>
-        {poll.options.map((opt, i) => {
-          const votes = poll.tallies[i] ?? 0;
-          const pct = poll.totalVotes ? Math.round((votes / poll.totalVotes) * 100) : 0;
-          const mine = poll.myVote === i;
-          if (showResults) {
-            return (
-              <div key={i}>
-                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 14, marginBottom: 2 }}>
-                  <span style={{ fontWeight: mine ? 700 : 400 }}>
-                    {opt} {mine && "✓"}
-                  </span>
-                  <span style={{ color: "var(--brand-muted)" }}>{pct}%</span>
-                </div>
-                <div style={{ background: "var(--brand-border)", borderRadius: 999, height: 8, overflow: "hidden" }}>
-                  <div
-                    style={{
-                      width: `${pct}%`,
-                      height: "100%",
-                      background: mine ? "var(--brand-green)" : "var(--brand-orange)",
-                    }}
-                  />
-                </div>
-              </div>
-            );
-          }
-          return (
-            <button key={i} className="pill" disabled={busy} onClick={() => vote(i)} style={{ textAlign: "left" }}>
-              {opt}
-            </button>
-          );
-        })}
-      </div>
-      {error && (
-        <div className="form-error" role="alert" style={{ marginTop: 10 }}>
-          {error}
-        </div>
-      )}
-      <p style={{ margin: "8px 0 0", fontSize: 12, color: "var(--brand-muted)" }}>
-        {poll.totalVotes} vote{poll.totalVotes === 1 ? "" : "s"}
-        {!session && " · log in to vote"}
-      </p>
     </div>
   );
 }

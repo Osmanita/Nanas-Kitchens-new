@@ -14,6 +14,7 @@ export default tseslint.config(
       "**/node_modules/**",
       "**/dist/**",
       "**/.next/**",
+      "**/.next-build/**",
       "**/target/**",
       "**/coverage/**",
       "apps/mobile/**",

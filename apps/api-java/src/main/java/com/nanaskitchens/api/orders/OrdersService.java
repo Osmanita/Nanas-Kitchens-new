@@ -113,6 +113,19 @@ public class OrdersService {
      */
     @Transactional
     public Map<String, Object> place(String buyerId, CreateOrderRequest input) {
+        return placeInternal(buyerId, input, null, null);
+    }
+
+    /** Server-only price snapshot from a previously consented poll reservation. */
+    @Transactional
+    public Map<String, Object> placePreorder(String buyerId, CreateOrderRequest input, int reservedUnitPrice, String reservationId) {
+        if (input.items().size() != 1 || reservedUnitPrice < 1) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "INVALID_PREORDER");
+        }
+        return placeInternal(buyerId, input, reservedUnitPrice, "preorder:" + reservationId);
+    }
+
+    private Map<String, Object> placeInternal(String buyerId, CreateOrderRequest input, Integer reservedUnitPrice, String reservationKey) {
         validateInput(input);
         record MenuRow(String menuItemId, String dishName, int priceCents) {
         }
@@ -134,7 +147,8 @@ public class OrdersService {
 
         Map<String, MenuRow> valid = new HashMap<>();
         for (MenuRow row : menuRows) {
-            valid.put(row.menuItemId(), row);
+            valid.put(row.menuItemId(), reservedUnitPrice == null ? row
+                    : new MenuRow(row.menuItemId(), row.dishName(), reservedUnitPrice));
         }
         for (CreateOrderRequest.Item item : input.items()) {
             if (!valid.containsKey(item.menuItemId())) {
@@ -200,7 +214,7 @@ public class OrdersService {
         // This check MUST come before the decrement below. Returning early after decrementing
         // would commit the decrement without an order attached and quietly leak portions -
         // which is exactly what happened the first time this was written.
-        String idempotencyKey = idempotencyKeyFor(buyerId, input);
+        String idempotencyKey = reservationKey == null ? idempotencyKeyFor(buyerId, input) : reservationKey;
         Optional<String> alreadyPlaced = db
                 .sql("SELECT id FROM \"Order\" WHERE \"idempotencyKey\" = :key AND \"buyerId\" = :buyerId")
                 .param("key", idempotencyKey)
@@ -306,6 +320,34 @@ public class OrdersService {
         result.put("orderId", orderId);
         result.put("payment", payment);
         return result;
+    }
+
+    /** Reuse one hosted session per pending order. Serialize against cancellation/webhooks. */
+    @Transactional
+    public Map<String, Object> checkout(String buyerId, String orderId) {
+        record Pending(String status, String reference, int totalCents) {}
+        Pending order = db.sql("""
+                SELECT status, "paymentIntentId", "totalCents" FROM "Order"
+                WHERE id = :id AND "buyerId" = :buyer FOR UPDATE
+                """)
+                .param("id", orderId).param("buyer", buyerId)
+                .query((rs, n) -> new Pending(rs.getString("status"),
+                        rs.getString("paymentIntentId"), rs.getInt("totalCents")))
+                .optional().orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "ORDER_NOT_FOUND"));
+        if (!"pending".equals(order.status()) || !"stripe".equals(payments.name()) || order.reference() == null) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "ORDER_NOT_AWAITING_PAYMENT");
+        }
+        if (order.reference().startsWith("cs_")) {
+            return Map.of("url", payments.retrieveCheckout(order.reference()).url());
+        }
+        // A still-open embedded form must be unable to charge after switching to Checkout.
+        if (!payments.tryCancelIntent(order.reference())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "PAYMENT_IN_PROGRESS");
+        }
+        PaymentProvider.Checkout checkout = payments.createCheckout(orderId, order.totalCents());
+        db.sql("UPDATE \"Order\" SET \"paymentIntentId\" = :reference WHERE id = :id")
+                .param("reference", checkout.id()).param("id", orderId).update();
+        return Map.of("url", checkout.url());
     }
 
     /**
@@ -495,13 +537,16 @@ public class OrdersService {
 
         boolean discloseAddress = "pickup".equals(order.fulfillment())
                 && !"pending".equals(order.status())
-                && !"cancelled".equals(order.status());
+                && !DEAD_STATUSES.contains(order.status());
+        String pickupTimeZone = db.sql("SELECT \"timeZone\" FROM \"Poll\" WHERE \"menuDayId\" = :id")
+                .param("id", order.menuDayId()).query(String.class).optional().orElse(null);
         return new OrderDetailResponse(
                 order.id(), order.buyerId(), order.kitchenId(), order.menuDayId(), order.status(),
                 order.readySlot(), order.fulfillment(), order.totalCents(), order.commissionCents(),
                 order.paymentIntentId(), order.refundedAt(), order.idempotencyKey(), order.createdAt(),
                 items, order.kitchenName(),
                 discloseAddress ? addressCrypto.decrypt(order.addressEncrypted()) : null,
+                pickupTimeZone,
                 deliveryService.findByOrderId(orderId));
     }
 

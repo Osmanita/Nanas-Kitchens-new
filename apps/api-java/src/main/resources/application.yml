@@ -43,10 +43,10 @@ spring:
     # Free-tier RPM cap: the agentic tool loop makes several model calls per user message,
     # so 429s are expected in bursts. Back off and retry instead of failing the request.
     retry:
-      max-attempts: 4
+      max-attempts: 2
       on-http-codes: [429, 503]
       backoff:
-        initial-interval: 3s
+        initial-interval: 500ms
         multiplier: 2
     anthropic:
       api-key: ${ANTHROPIC_API_KEY:}
@@ -102,6 +102,8 @@ app:
     # mock | stripe (Story 3.4) — mock settles instantly so the demo needs no Stripe keys;
     # stripe creates real PaymentIntents and settles orders via /webhooks/stripe.
     provider: ${PAYMENTS_PROVIDER:mock}
+    # Trusted return origin for Stripe-hosted Checkout (HTTPS in production).
+    web-base-url: ${WEB_BASE_URL:http://localhost:3000}
     # Abandoned pending orders (payment sheet never completed) are released after ~30 min.
     pending-sweep-delay-ms: 300000
     stripe:

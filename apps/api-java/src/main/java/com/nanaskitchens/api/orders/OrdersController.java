@@ -47,6 +47,11 @@ public class OrdersController {
         return orders.cancel(auth.getName(), id);
     }
 
+    @PostMapping("/{id}/checkout")
+    public Map<String, Object> checkout(Authentication auth, @PathVariable String id) {
+        return orders.checkout(auth.getName(), id);
+    }
+
     // ── Story 4.1: seller lifecycle transitions ───────────────────────────────
 
     @PostMapping("/{id}/accept")

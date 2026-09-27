@@ -12,11 +12,14 @@ import { renderRich } from "../../lib/rich-text";
 import LocationPickerModal from "../components/LocationPickerModal";
 import PaymentStep, { type PendingPayment } from "../components/PaymentStep";
 import Icon from "../components/Icon";
+import DeliveryMap from "../components/DeliveryMap";
 import styles from "./chat.module.css";
 
 interface Message {
   role: "user" | "assistant";
   content: string;
+  /** Data behind a rendered card, retained for follow-up questions without showing IDs. */
+  context?: string;
 }
 
 interface OrderSummary {
@@ -38,6 +41,8 @@ interface MenuCard {
   kitchenName: string;
   kitchenId: string;
   menuDayId: string;
+  date?: string;
+  readyWindows?: { start: string; end: string; slotMinutes: number }[];
   items: {
     menuItemId: string;
     name: string;
@@ -136,99 +141,6 @@ function fmtSlot(value: string) {
   return Number.isNaN(t) ? value : new Date(t).toLocaleString();
 }
 
-/** Shows a resilient delivery preview: the map is an enhancement, while the address card
- * remains useful when a browser blocks geocoding or the OpenStreetMap embed. */
-function AddressMap({ address }: { address: string }) {
-  const [coords, setCoords] = useState<{ lat: number; lon: number } | null>(
-    null,
-  );
-  const [failed, setFailed] = useState(false);
-  const [mapLoaded, setMapLoaded] = useState(false);
-
-  useEffect(() => {
-    let alive = true;
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 8_000);
-    setCoords(null);
-    setFailed(false);
-    setMapLoaded(false);
-    // Same tiered fallback as the server: drop leading tokens until a variant resolves.
-    const tokens = address.trim().replace(/[,;]+/g, " ").split(/\s+/);
-    const candidates: string[] = [];
-    for (let drop = 0; drop <= Math.min(3, tokens.length - 2); drop++) {
-      const candidate = tokens.slice(drop).join(" ");
-      if (candidate) candidates.push(candidate);
-    }
-    (async () => {
-      for (const candidate of candidates) {
-        try {
-          const r = await fetch(
-            `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(candidate)}`,
-            { headers: { accept: "application/json" }, signal: controller.signal },
-          );
-          if (!r.ok) break;
-          const d = await r.json();
-          if (!alive) return;
-          if (Array.isArray(d) && d[0]) {
-            setCoords({ lat: +d[0].lat, lon: +d[0].lon });
-            return;
-          }
-        } catch {
-          break;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 350));
-        if (!alive) return;
-      }
-      if (alive) setFailed(true);
-    })();
-    return () => {
-      alive = false;
-      controller.abort();
-      clearTimeout(timeoutId);
-    };
-  }, [address]);
-
-  const mapUrl = coords
-    ? `https://www.openstreetmap.org/?mlat=${coords.lat}&mlon=${coords.lon}#map=15/${coords.lat}/${coords.lon}`
-    : `https://www.openstreetmap.org/search?query=${encodeURIComponent(address)}`;
-  const d = 0.004;
-  const bbox = coords
-    ? `${coords.lon - d},${coords.lat - d},${coords.lon + d},${coords.lat + d}`
-    : null;
-  return (
-    <div className={styles.addressPreview}>
-      {coords && !failed && bbox && (
-        <iframe
-          title="Delivery drop-off location"
-          src={`https://www.openstreetmap.org/export/embed.html?bbox=${encodeURIComponent(bbox)}&layer=mapnik&marker=${coords.lat}%2C${coords.lon}`}
-          className={`${styles.addressFrame} ${mapLoaded ? styles.addressFrameVisible : ""}`}
-          onLoad={() => setMapLoaded(true)}
-          onError={() => setFailed(true)}
-          loading="lazy"
-        />
-      )}
-      {!mapLoaded || failed || !coords ? (
-        <div className={styles.addressFallback} aria-label="Delivery address preview">
-          <div className={styles.addressMapGraphic} aria-hidden="true">
-            <span className={styles.addressMapRoad} />
-            <span className={styles.addressMapRoadAlt} />
-            <span className={styles.addressPin}>●</span>
-          </div>
-        </div>
-      ) : null}
-      <div className={styles.addressDetails}>
-        <div>
-          <span>{failed ? "Map preview unavailable" : "Delivery location"}</span>
-          <strong>{address}</strong>
-        </div>
-        <a href={mapUrl} target="_blank" rel="noreferrer">
-          Open map
-        </a>
-      </div>
-    </div>
-  );
-}
-
 export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
@@ -254,6 +166,9 @@ export default function ChatPage() {
     (PendingPayment & { totalCents: number }) | null
   >(null);
   const [picked, setPicked] = useState<Record<string, number>>({});
+  const [orderMode, setOrderMode] = useState<"pickup" | "delivery">("delivery");
+  const [orderTime, setOrderTime] = useState("17:00");
+  const [actionError, setActionError] = useState<string | null>(null);
   const [queued, setQueued] = useState<string | null>(null);
   const [recording, setRecording] = useState(false);
   const [recordSeconds, setRecordSeconds] = useState(0);
@@ -343,6 +258,29 @@ export default function ChatPage() {
     locationOverride?: PickedLocation | null,
     history: Message[] = messages,
   ) {
+    const nearbyLocation = locationOverride !== undefined ? locationOverride : location;
+    if (nearbyLocation && ["Find Turkish food near me", "What's cooking near me today?"].includes(text.trim())) {
+      if (streaming) return;
+      setStreaming(true);
+      setInput("");
+      setFailure(null);
+      setActionError(null);
+      const next: Message[] = [...history, { role: "user", content: text }];
+      setMessages(next);
+      try {
+        const query = new URLSearchParams({ lat: String(nearbyLocation.lat), lng: String(nearbyLocation.lng) });
+        if (text.trim() === "Find Turkish food near me") query.set("cuisine", "turkish");
+        const response = await apiFetch(`/kitchens/search?${query}`);
+        if (!response.ok) throw new Error();
+        const items = await response.json();
+        setPendingKitchens({ type: "kitchens", items });
+        setPendingMenu(null);
+        setMessages([...next, { role: "assistant", content: items.length ? "Here are the kitchens near you:" : "No kitchens match this search near your selected location.", context: JSON.stringify({ type: "kitchens", items }) }]);
+      } catch {
+        setFailure({ text, history, message: "Kitchen search couldn’t load. Please try again." });
+      } finally { setStreaming(false); }
+      return;
+    }
     if (!text.trim() || streaming) return;
     const next: Message[] = [...history, { role: "user", content: text }];
     setFailure(null);
@@ -366,8 +304,11 @@ export default function ChatPage() {
       // but the agent sees it every turn and never needs to ask (SystemPrompt rule 6).
       const effectiveLocation =
         locationOverride !== undefined ? locationOverride : location;
+      const contextualHistory = next.map(({ role, content, context }) => ({ role,
+        content: context ? `${content}\n[App card data: ${context}]` : content,
+      }));
       const payloadMessages = effectiveLocation
-        ? next.map((m, i) =>
+        ? contextualHistory.map((m, i) =>
             i === next.length - 1
               ? {
                   ...m,
@@ -375,12 +316,13 @@ export default function ChatPage() {
                 }
               : m,
           )
-        : next;
+        : contextualHistory;
 
       // apiFetch refreshes the access token and retries once on 401 (15-min expiry).
       const res = await apiFetch(`/chat/stream`, {
         method: "POST",
         body: JSON.stringify({ messages: payloadMessages }),
+        signal: AbortSignal.timeout(45_000),
       });
 
       if (res.status === 401 || res.status === 403) {
@@ -412,6 +354,7 @@ export default function ChatPage() {
           if (!line.startsWith("data:")) continue;
           const payload = JSON.parse(line.slice(5).trim());
           if (payload.type === "text") addChunk(payload.delta);
+          else if (payload.type === "error") throw new Error("CHAT_UNAVAILABLE");
           else if (payload.type === "done") break;
         }
       }
@@ -437,7 +380,9 @@ export default function ChatPage() {
           assistantText = assistantText.replace(structured.raw, "").trim();
       }
 
-      setMessages([...next, { role: "assistant", content: assistantText }]);
+      setMessages([...next, { role: "assistant", content: assistantText,
+        ...(structured ? { context: JSON.stringify(structured.parsed) } : {}),
+      }]);
     } catch {
       setFailure({
         text,
@@ -449,7 +394,10 @@ export default function ChatPage() {
     }
   }
 
+  const [deliveryLocation, setDeliveryLocation] = useState<PickedLocation | null>(null);
+
   function changeDeliveryAddress(loc: PickedLocation) {
+    setDeliveryLocation(loc);
     setPendingSummary((prev) =>
       prev
         ? {
@@ -468,8 +416,11 @@ export default function ChatPage() {
     // charge and another stock decrement. The checkout page already gates itself this way.
     if (!pendingSummary || confirming) return;
     setConfirming(true);
+    setActionError(null);
     try {
       await postConfirmedOrder();
+    } catch {
+      setActionError("Could not confirm the order. Check your connection and try again.");
     } finally {
       setConfirming(false);
     }
@@ -483,14 +434,11 @@ export default function ChatPage() {
       body: JSON.stringify(draft),
     });
     const body = await res.json();
-    setPendingSummary(null);
     if (!res.ok) {
-      setMessages((prev) => [
-        ...prev,
-        { role: "assistant", content: `Error: ${body.message}` },
-      ]);
+      setActionError(body.message ?? "Could not confirm the order. Please try again.");
       return;
     }
+    setPendingSummary(null);
     if (body.requiresPayment) {
       // Story 3.4: the order exists but is still 'pending' — it holds the portions and nothing
       // has been charged. There is no `order` object in this reply, so announcing "confirmed"
@@ -507,8 +455,7 @@ export default function ChatPage() {
         {
           role: "assistant",
           content:
-            "Your portions are reserved. Enter your card below to complete the order — " +
-            "nothing is charged until you pay.",
+            "Your portions are reserved. Continue to secure checkout to complete your payment.",
         },
       ]);
       return;
@@ -530,18 +477,86 @@ export default function ChatPage() {
     ]);
   }
 
-  function addPickedToOrder() {
+  async function showKitchenMenu(kitchen: KitchenListCard["items"][number]) {
+    if (streaming) return;
+    setStreaming(true);
+    setActionError(null);
+    try {
+      const response = await apiFetch(`/kitchens/${encodeURIComponent(kitchen.id)}/menu`);
+      if (!response.ok) throw new Error();
+      const menu = await response.json();
+      if (!menu?.items?.length) {
+        setActionError("This kitchen has no published menu today.");
+        return;
+      }
+      setPendingMenu({ type: "menu", kitchenId: kitchen.id, kitchenName: kitchen.name,
+        menuDayId: menu.id, date: menu.date, readyWindows: menu.readyWindows,
+        items: menu.items.map((item: { id: string; portionsRemaining: number; dish: Omit<MenuCard["items"][number], "menuItemId"> }) => ({
+          ...item.dish, menuItemId: item.id, portionsLeft: item.portionsRemaining,
+        })),
+      });
+      setOrderTime(menu.readyWindows?.[0]?.start ?? "17:00");
+      setPicked({});
+      setPendingKitchens(null);
+      setMessages((previous) => [...previous,
+        { role: "user", content: `Show me the menu for ${kitchen.name}` },
+        { role: "assistant", content: `Here is today's menu at ${kitchen.name}, tap to pick:`, context: JSON.stringify(menu) },
+      ]);
+    } catch { setActionError("The menu couldn’t load. Please select the kitchen again."); }
+    finally { setStreaming(false); }
+  }
+
+  async function addPickedToOrder() {
     if (!pendingMenu) return;
     const selected = pendingMenu.items.filter(
       (it) => (picked[it.menuItemId] ?? 0) > 0,
     );
-    if (selected.length === 0) return;
+    if (selected.length === 0 || streaming) return;
+    const address = deliveryLocation ?? location;
+    if (orderMode === "delivery" && !address) {
+      setActionError("Choose a delivery address before reviewing your order.");
+      setDeliveryPickerOpen(true);
+      return;
+    }
     const parts = selected.map((it) => `${picked[it.menuItemId]} x ${it.name}`);
-    const menuItemIds = selected.map((it) => it.menuItemId).join("|");
-    const text = `I'd like ${parts.join(", ")} from ${pendingMenu.kitchenName}. [menuItemIds: ${menuItemIds}]`;
-    setPendingMenu(null);
-    setPicked({});
-    send(text);
+    setStreaming(true);
+    setActionError(null);
+    try {
+      // Refresh the source menu, including model-rendered cards that may carry dish IDs.
+      const menuResponse = await apiFetch(`/kitchens/${encodeURIComponent(pendingMenu.kitchenId)}/menu`);
+      if (!menuResponse.ok) throw new Error("The menu couldn’t load. Please try again.");
+      const menu = await menuResponse.json();
+      const items = selected.map((selectedItem) => {
+        const current = menu?.items?.find((item: { id: string; dishId: string }) =>
+          item.id === selectedItem.menuItemId || item.dishId === selectedItem.menuItemId);
+        if (!current) throw new Error("The menu has changed. Please open the kitchen’s menu again.");
+        if (current.portionsRemaining < picked[selectedItem.menuItemId]) throw new Error(`There aren’t enough portions of ${selectedItem.name} left. Please choose fewer.`);
+        return { menuItemId: current.id, qty: picked[selectedItem.menuItemId] };
+      });
+      if (menu.readyWindows?.length && !menu.readyWindows.some((window: { start: string; end: string }) =>
+        orderTime >= window.start && orderTime < window.end)) {
+        throw new Error(`Choose a ready time during the kitchen’s hours: ${menu.readyWindows.map((window: { start: string; end: string }) => `${window.start}–${window.end}`).join(", ")}.`);
+      }
+      const draft = { kitchenId: pendingMenu.kitchenId, menuDayId: menu.id, items,
+        readySlot: `${menu.date}T${orderTime}:00`, fulfillment: orderMode,
+        deliveryAddress: orderMode === "delivery" ? address?.label : undefined, courierTipCents: 0 };
+      const response = await apiFetch("/orders", { method: "POST", body: JSON.stringify({ ...draft, confirm: false }) });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.message ?? "Could not review this order. Please try again.");
+      setPendingSummary({ confirmed: false, draft, summary: {
+        ...body.summary, kitchenName: pendingMenu.kitchenName,
+        items: body.summary.items.map((item: { dish: string; qty: number; unitPriceCents: number }) => ({
+          name: item.dish, qty: item.qty, priceCents: item.unitPriceCents,
+        })),
+      } });
+      setMessages((previous) => [...previous,
+        { role: "user", content: `I'd like ${parts.join(", ")} from ${pendingMenu.kitchenName}.` },
+        { role: "assistant", content: "Please review and confirm your order:" },
+      ]);
+      setPendingMenu(null);
+      setPicked({});
+    } catch (error) { setActionError(error instanceof Error ? error.message : "Could not review the order. Please try again."); }
+    finally { setStreaming(false); }
   }
 
   function onSubmit(e: FormEvent) {
@@ -654,6 +669,8 @@ export default function ChatPage() {
         onClose={() => setLocationPickerOpen(false)}
         onConfirm={confirmLocation}
       />
+      <LocationPickerModal open={deliveryPickerOpen} onClose={() => setDeliveryPickerOpen(false)}
+        onConfirm={changeDeliveryAddress} restrictToUS={false} />
 
       <header className={styles.toolbar}>
         <div className={styles.identity}>
@@ -801,6 +818,7 @@ export default function ChatPage() {
           </div>
         )}
 
+        {actionError && <div className={styles.error} role="alert">{actionError}</div>}
         {failure && (
           <div className={styles.error} role="alert">
             <p>{failure.message}</p>
@@ -838,7 +856,7 @@ export default function ChatPage() {
                   <button
                     key={k.id}
                     type="button"
-                    onClick={() => send(`Show me the menu for ${k.name}`)}
+                    onClick={() => showKitchenMenu(k)}
                     disabled={soldOut || streaming}
                     className={styles.kitchen}
                     aria-label={`View menu for ${k.name}${soldOut ? ", sold out today" : ""}`}
@@ -1086,6 +1104,19 @@ export default function ChatPage() {
                   </div>
                 );
               })}
+              <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginTop: 18 }}>
+                <label>Fulfillment
+                  <select className="field" value={orderMode} onChange={(event) => setOrderMode(event.target.value as "pickup" | "delivery")}>
+                    <option value="delivery">Delivery</option><option value="pickup">Pickup</option>
+                  </select>
+                </label>
+                <label>Ready time
+                  <input className="field" type="time" value={orderTime} required onChange={(event) => setOrderTime(event.target.value)} />
+                </label>
+                {orderMode === "delivery" && <button type="button" className="btn-ghost" onClick={() => setDeliveryPickerOpen(true)}>
+                  {deliveryLocation?.label ?? location?.label ?? "Choose delivery address"} · Change
+                </button>}
+              </div>
               {(() => {
                 const count = Object.values(picked).reduce((a, b) => a + b, 0);
                 const total = pendingMenu.items.reduce(
@@ -1117,7 +1148,7 @@ export default function ChatPage() {
                     </span>
                     <button
                       onClick={addPickedToOrder}
-                      disabled={count === 0 || streaming}
+                      disabled={count === 0 || streaming || !orderTime}
                       className="btn btn-primary"
                       style={{ padding: "10px 22px" }}
                     >
@@ -1238,14 +1269,9 @@ export default function ChatPage() {
                       📍 Change address
                     </button>
                   </div>
-                  <AddressMap
+                  <DeliveryMap
                     address={pendingSummary.summary.deliveryAddress}
-                  />
-                  <LocationPickerModal
-                    open={deliveryPickerOpen}
-                    onClose={() => setDeliveryPickerOpen(false)}
-                    onConfirm={changeDeliveryAddress}
-                    restrictToUS={false}
+                    location={deliveryLocation?.label === pendingSummary.summary.deliveryAddress ? deliveryLocation : location}
                   />
                 </>
               )}

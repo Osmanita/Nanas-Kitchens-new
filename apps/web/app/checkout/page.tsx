@@ -4,13 +4,16 @@
  * come from the kitchen's published windows; the priced summary and the placement both go
  * through POST /orders (confirm=false then true — the same FR15 guardrail the agent uses).
  * When the server runs the real Stripe provider it answers requiresPayment + clientSecret,
- * and the PaymentElement step below settles it; the mock provider confirms instantly. */
+ * and the hosted payment step below settles it; the mock provider confirms instantly. */
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { API, apiFetch, ensureSession, Session } from "../../lib/api";
 import { Cart, clearCart, getCart, money, setQty, subscribeCart } from "../../lib/cart";
 import PaymentStep, { PendingPayment } from "../components/PaymentStep";
+
+import { PageIntro } from "../components/PageKit";
+import styles from "../marketplace.module.css";
 
 interface ReadyWindow {
   start: string;
@@ -90,14 +93,14 @@ export default function CheckoutPage() {
   useEffect(() => {
     if (!cart) return;
     let cancelled = false;
-    fetch(`${API}/kitchens/${cart.kitchenId}/menu`)
+    fetch(`${API}/kitchens/${cart.kitchenId}/menu?date=${encodeURIComponent(cart.menuDate)}`)
       .then((res) => (res.ok ? res.json() : Promise.reject()))
       .then((body: MenuDay | null) => !cancelled && setMenu(body))
       .catch(() => !cancelled && setMenu(null));
     return () => {
       cancelled = true;
     };
-  }, [cart?.kitchenId]);
+  }, [cart?.kitchenId, cart?.menuDate]);
 
   const slots = useMemo(
     () => (menu ? buildSlots(menu.date, menu.readyWindows) : []),
@@ -132,7 +135,7 @@ export default function CheckoutPage() {
       }
       setSummary(body.summary as PricedSummary);
     } catch {
-      setError("Network error — is the API running?");
+      setError("We couldn’t connect. Please try again.");
     } finally {
       setBusy(false);
     }
@@ -154,7 +157,8 @@ export default function CheckoutPage() {
         return;
       }
       if (body.requiresPayment) {
-        // Story 3.4: the pending order holds the portions; the PaymentElement step below
+        sessionStorage.setItem("checkout_cart_order", body.orderId);
+        // Story 3.4: the pending order holds the portions; the hosted payment step below
         // settles it (webhook flips it to confirmed). Abandonment auto-releases server-side.
         setPayment({
           orderId: body.orderId,
@@ -176,7 +180,7 @@ export default function CheckoutPage() {
 
   if (!cart) {
     return (
-      <main style={{ maxWidth: 640, margin: "0 auto", padding: "32px 24px" }}>
+      <main className={`${styles.page} ${styles.compact}`}>
         <div className="card" style={{ textAlign: "center", padding: 48 }}>
           <p style={{ fontSize: 40, margin: 0 }}>🛒</p>
           <p style={{ fontWeight: 600, margin: "8px 0 4px" }}>Your cart is empty</p>
@@ -193,7 +197,7 @@ export default function CheckoutPage() {
 
   if (!session) {
     return (
-      <main style={{ maxWidth: 640, margin: "0 auto", padding: "32px 24px" }}>
+      <main className={`${styles.page} ${styles.compact}`}>
         <div className="card" style={{ textAlign: "center", padding: 48 }}>
           <p style={{ fontSize: 40, margin: 0 }}>🔐</p>
           <p style={{ fontWeight: 600, margin: "8px 0 4px" }}>Log in to check out</p>
@@ -209,11 +213,11 @@ export default function CheckoutPage() {
   }
 
   return (
-    <main style={{ maxWidth: 640, margin: "0 auto", padding: "32px 24px" }}>
-      <Link href={`/kitchens/${cart.kitchenId}`} style={{ fontSize: 14 }}>
+    <main className={`${styles.page} ${styles.compact}`}>
+      <Link href={`/kitchens/${cart.kitchenId}`} className={styles.back}>
         ‹ Back to {cart.kitchenName}
       </Link>
-      <h1 style={{ margin: "12px 0 16px", fontSize: 24, color: "var(--brand-green)" }}>Checkout</h1>
+      <PageIntro eyebrow="Your table / Checkout" title="Almost at your table." description="Choose a time, check the details, and we’ll take it from here." />
 
       {conflict && (
         <div className="form-error" role="alert">
@@ -226,7 +230,8 @@ export default function CheckoutPage() {
         </div>
       )}
 
-      <div className="card" style={{ padding: 16, marginBottom: 16 }}>
+      <div className={styles.detailGrid}><section className={styles.panel}><h2>Your meal</h2>
+      <div>
         {cart.lines.map((line) => (
           <div
             key={line.menuItemId}
@@ -272,7 +277,7 @@ export default function CheckoutPage() {
                 setSummary(null);
               }}
             >
-              ⏰ {s.label}
+              {s.label}
             </button>
           ))}
         </div>
@@ -288,7 +293,7 @@ export default function CheckoutPage() {
             setSummary(null);
           }}
         >
-          🏠 Pickup
+          Kitchen pickup
         </button>
         <button
           aria-pressed={fulfillment === "delivery"}
@@ -297,7 +302,7 @@ export default function CheckoutPage() {
             setSummary(null);
           }}
         >
-          🚗 Delivery
+          Delivery to you
         </button>
       </div>
       {fulfillment === "delivery" && (
@@ -323,11 +328,11 @@ export default function CheckoutPage() {
         </div>
       )}
 
+      </section><aside className={styles.panel}><h2>Order summary</h2>
       {payment ? (
         <PaymentStep
           payment={payment}
           totalCents={summary?.totalCents ?? subtotal}
-          onPaid={clearCart}
         />
       ) : !summary ? (
         <>
@@ -385,6 +390,7 @@ export default function CheckoutPage() {
           </button>
         </div>
       )}
+      </aside></div>
     </main>
   );
 }

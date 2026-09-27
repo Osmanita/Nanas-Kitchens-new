@@ -80,14 +80,27 @@ public class InventoryService {
         if (!ownerId.equals(sellerId)) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN);
         }
+        // Serialize with reservation transfer/cancellation before taking a fresh snapshot
+        // of committed quantities. Unpaid pre-orders must not become public stock again.
+        db.sql("SELECT id FROM \"MenuItem\" WHERE id = :id FOR UPDATE")
+                .param("id", menuItemId).query(String.class).single();
+        if (db.sql("""
+                SELECT count(*) FROM "Poll" p JOIN "MenuItem" mi ON mi."menuDayId" = p."menuDayId"
+                WHERE mi.id = :id AND p."finalizedAt" IS NULL
+                """).param("id", menuItemId).query(Integer.class).single() > 0) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "POLL_MENU_MANAGED");
+        }
         int updated = db.sql("""
                 UPDATE "MenuItem" mi SET
                     "portionsTotal" = mi."portionsTotal" + :delta,
                     "portionsRemaining" = mi."portionsTotal" + :delta - c.committed
                 FROM (
-                    SELECT COALESCE(SUM(oi.qty), 0)::int AS committed
-                    FROM "OrderItem" oi JOIN "Order" o ON o.id = oi."orderId"
-                    WHERE oi."menuItemId" = :id AND o.status NOT IN ('cancelled', 'declined')
+                    SELECT (
+                        (SELECT COALESCE(SUM(oi.qty), 0) FROM "OrderItem" oi JOIN "Order" o ON o.id = oi."orderId"
+                         WHERE oi."menuItemId" = :id AND o.status NOT IN ('cancelled', 'declined'))
+                        + (SELECT COALESCE(SUM(qty), 0) FROM "PollVote"
+                           WHERE "menuItemId" = :id AND status = 'ready_for_payment')
+                    )::int AS committed
                 ) c
                 WHERE mi.id = :id AND mi."portionsTotal" + :delta >= c.committed
                   AND mi."portionsTotal" + :delta >= 0

@@ -12,6 +12,8 @@ import type { NextConfig } from "next";
 const standalone = process.env.NEXT_OUTPUT_STANDALONE === "1";
 
 const nextConfig: NextConfig = {
+  // Keep verification builds separate from a running dev server's Webpack cache.
+  distDir: process.env.NEXT_DIST_DIR || ".next",
   devIndicators: false,
   ...(standalone ? { output: "standalone" as const } : {}),
   // In a pnpm workspace Next infers the trace root from the nearest lockfile, and an

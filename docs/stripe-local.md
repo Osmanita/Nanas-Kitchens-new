@@ -1,7 +1,15 @@
 # Yerel Stripe test ödemeleri
 
-Checkout ve sohbet siparişleri aynı Stripe PaymentIntent akışını kullanır. Ödeme,
+Checkout ve sohbet siparişleri Pay düğmesiyle Stripe'ın barındırdığı ödeme sayfasına gider. Ödeme,
 imzası doğrulanan `/webhooks/stripe` bildirimi geldikten sonra onaylanır.
+
+`POST /orders/{id}/checkout` yalnızca siparişin sahibine açıktır. Bekleyen eski PaymentIntent
+iptal edilir ve aynı sipariş için tek bir Checkout Session tekrar kullanılır. Session açıkken
+`paymentIntentId` alanı `cs_...` referansını tutar; doğrulanmış ödeme bildirimi bunu gerçek
+`pi_...` kimliğiyle değiştirir. İptal ve süre aşımı, açık oturumu da kapatır.
+`WEB_BASE_URL` dönüş adresidir (yerelde `http://localhost:3000`, üretimde HTTPS).
+Dashboard webhook'ları da `checkout.session.completed`, `checkout.session.async_payment_succeeded`,
+`checkout.session.async_payment_failed` ve `checkout.session.expired` olaylarını dinlemelidir.
 
 1. Stripe sandbox hesabının test anahtarlarını kökteki, Git'in yok saydığı `.env`
    dosyasına `STRIPE_SECRET_KEY` ve `STRIPE_PUBLISHABLE_KEY` olarak kaydet.

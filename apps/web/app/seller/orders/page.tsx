@@ -7,10 +7,13 @@
  * second confirming tap, and delivery orders grow a partner status chip + tracking
  * link once the courier job exists (created when the order is marked Ready). */
 import Link from "next/link";
+import { PageIntro } from "../../components/PageKit";
+import styles from "../../marketplace.module.css";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiFetch, ensureSession, Session } from "../../../lib/api";
 import { money } from "../../../lib/cart";
+import { validServiceDate } from "../../../lib/seller";
 
 interface OrderLineItem {
   name: string;
@@ -78,6 +81,11 @@ export default function SellerOrdersPage() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    const requested = new URLSearchParams(window.location.search).get("date");
+    if (validServiceDate(requested)) setDate(requested);
+  }, []);
+
+  useEffect(() => {
     ensureSession().then((s) => {
       setSession(s);
       if (!s) router.replace("/login?next=/seller/orders");
@@ -132,7 +140,7 @@ export default function SellerOrdersPage() {
 
   if (session === undefined || (session?.role === "seller" && kitchenId === undefined)) {
     return (
-      <main style={{ maxWidth: 1280, margin: "0 auto", padding: "32px 24px" }}>
+      <main className={`${styles.page} ${styles.portal} ${styles.wide}`}>
         <div className="skeleton" style={{ height: 220 }} />
       </main>
     );
@@ -142,7 +150,7 @@ export default function SellerOrdersPage() {
 
   if (session.role !== "seller") {
     return (
-      <main style={{ maxWidth: 720, margin: "0 auto", padding: "32px 24px" }}>
+      <main className={`${styles.page} ${styles.portal} ${styles.wide}`}>
         <div className="form-error" role="alert">
           This page is for sellers. You are signed in as a {session.role}.
         </div>
@@ -153,7 +161,7 @@ export default function SellerOrdersPage() {
 
   if (kitchenId === null) {
     return (
-      <main style={{ maxWidth: 720, margin: "0 auto", padding: "32px 24px" }}>
+      <main className={`${styles.page} ${styles.portal} ${styles.wide}`}>
         <div className="card" style={{ textAlign: "center", padding: 40 }}>
           <p style={{ fontSize: 36, margin: 0 }}>🏠</p>
           <p style={{ fontWeight: 600, margin: "8px 0 4px" }}>Set up your kitchen first</p>
@@ -175,65 +183,17 @@ export default function SellerOrdersPage() {
   const needsResponse = active.filter((o) => o.status === "confirmed").length;
 
   return (
-    <main style={{ maxWidth: 1280, margin: "0 auto", padding: "32px 24px" }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-        <div>
-          <h1 style={{ margin: "0 0 4px", fontSize: 26, color: "var(--brand-green)" }}>Today&rsquo;s Orders</h1>
-          <p style={{ margin: 0, color: "var(--brand-muted)" }}>
-            Accept new orders, then move them across as you cook. Buyers are notified at every step.
-          </p>
-        </div>
-        <input
-          type="date"
-          className="field"
-          style={{ width: "auto", margin: 0 }}
-          value={date}
-          onChange={(e) => e.target.value && setDate(e.target.value)}
-          aria-label="Board date"
-        />
-      </div>
+    <main className={`${styles.page} ${styles.portal} ${styles.wide}`}>
+      <PageIntro eyebrow="Your kitchen / Orders" title="A good day in the kitchen." description="Accept incoming orders and follow every meal from preparation to handoff.">
+        <input type="date" className="field" style={{ width: "auto", margin: 0 }} value={date} onChange={(e) => e.target.value && setDate(e.target.value)} aria-label="Board date" />
+      </PageIntro>
 
-      {orders !== undefined && (
-        <div
-          style={{
-            display: "flex",
-            gap: 12,
-            flexWrap: "wrap",
-            marginTop: 18,
-          }}
-          aria-label="Daily summary"
-        >
-          {[
-            { label: "Orders", value: String(active.length), icon: "🧾" },
-            { label: "Revenue", value: money(revenueCents), icon: "💰" },
-            {
-              label: "Avg order",
-              value: active.length ? money(Math.round(revenueCents / active.length)) : "—",
-              icon: "📊",
-            },
-            { label: "Need response", value: String(needsResponse), icon: needsResponse > 0 ? "⏳" : "✅" },
-          ].map((s) => (
-            <div
-              key={s.label}
-              className="card"
-              style={{
-                flex: "1 1 140px",
-                padding: "12px 16px",
-                display: "flex",
-                alignItems: "center",
-                gap: 10,
-                margin: 0,
-              }}
-            >
-              <span style={{ fontSize: 22 }}>{s.icon}</span>
-              <div>
-                <div style={{ fontSize: 18, fontWeight: 700, lineHeight: 1.1 }}>{s.value}</div>
-                <div style={{ fontSize: 12, color: "var(--brand-muted)" }}>{s.label}</div>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
+      {orders !== undefined && <div className={styles.dailySummary} aria-label="Daily summary">
+        <div><strong>{active.length}</strong><span>Orders</span></div>
+        <div><strong>{money(revenueCents)}</strong><span>Order total</span></div>
+        <div><strong>{active.length ? money(Math.round(revenueCents / active.length)) : "—"}</strong><span>Average order</span></div>
+        <div><strong>{needsResponse}</strong><span>Awaiting your response</span></div>
+      </div>}
 
       {error && (
         <div className="form-error" role="alert" style={{ marginTop: 16 }}>
@@ -257,7 +217,7 @@ export default function SellerOrdersPage() {
           </p>
         </div>
       ) : (
-        <div className="board" style={{ marginTop: 20 }} aria-label="Orders by status">
+        <div className="board" style={{ marginTop: 20 }} aria-label="Orders by status" role="region" tabIndex={0}>
           {COLUMNS.map((col) => {
             const cards = active
               .filter((o) => o.status === col.status)
@@ -342,7 +302,7 @@ function OrderCard({
   }
 
   return (
-    <article className="order-card">
+    <article className="order-card" id={`order-${order.id}`} style={{ scrollMarginTop: 140 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
         <span className="slot">⏰ {slotTime(order.readySlot)}</span>
         <span style={{ fontSize: 12, color: "var(--brand-muted)" }}>

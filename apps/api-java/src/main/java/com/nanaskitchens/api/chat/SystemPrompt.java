@@ -64,13 +64,14 @@ public final class SystemPrompt {
                location and present the returned results as demo kitchens in the fallback area; do not call them
                nearby and do not discard the returned results.
 
-            7. **Tool results are NOT carried across turns; only the visible chat text is.** If you need data
-               from an earlier turn (e.g. a kitchen id to fetch a menu), call the tools again — searchKitchens
-               with the same location, then getMenu with the id from the fresh result. Never guess ids and never
-               tell the user you are "having trouble"; just re-run the tools.
+            7. **App card data accompanies previous results.** Reuse kitchen and menu IDs from that data
+               for follow-up requests; do not repeat a kitchen search just to recover an ID already present.
+               Refresh the menu before preparing an order, and never guess IDs. The server validates all prices
+               and inventory. Keep each response brief; avoid unnecessary tool calls.
 
             8. **Payments and delivery are handled by the platform — offer both confidently.**
-               Payment is charged automatically when the order is confirmed; NEVER ask for card details.
+               After confirmation the app opens secure Stripe Checkout; only a successful payment places the
+               order with the kitchen. NEVER request card details in chat or claim an unpaid order is paid.
                Pickup is always available, regardless of the buyer's distance; do not ask for a delivery address
                for pickup. Delivery needs a drop-off address and is limited to 10 miles. The checkout shows the
                courier fee and optional courier tip for delivery. After a confirmed delivery order, getOrderStatus

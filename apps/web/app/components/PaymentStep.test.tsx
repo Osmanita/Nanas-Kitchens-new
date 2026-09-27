@@ -1,85 +1,52 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { apiFetch } from "../../lib/api";
 import PaymentStep, { PAYMENT_TIMEOUT_MS } from "./PaymentStep";
 
-const stripeMock = vi.hoisted(() => ({
-  confirmPayment: vi.fn(),
-}));
+vi.mock("../../lib/api", () => ({ apiFetch: vi.fn() }));
+const payment = { orderId: "order-1" };
+beforeEach(() => { vi.useRealTimers(); vi.clearAllMocks(); });
 
-vi.mock("@stripe/stripe-js", () => ({
-  loadStripe: vi.fn(() => Promise.resolve({})),
-}));
-
-vi.mock("@stripe/react-stripe-js", async () => {
-  const React = await import("react");
-  return {
-    Elements: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-    PaymentElement: ({ onReady }: { onReady?: () => void }) => {
-      React.useEffect(() => onReady?.(), [onReady]);
-      return <div data-testid="payment-element" />;
-    },
-    useElements: () => ({}),
-    useStripe: () => stripeMock,
-  };
-});
-
-vi.mock("next/navigation", () => ({
-  useRouter: () => ({ push: vi.fn() }),
-}));
-
-const payment = {
-  orderId: "order-1",
-  clientSecret: "pi_test_secret",
-  publishableKey: "pk_test_key",
-};
-
-beforeEach(() => {
-  vi.useRealTimers();
-  vi.clearAllMocks();
-});
-
-describe("PaymentStep", () => {
-  it("returns to an enabled pay button when Stripe confirmation rejects", async () => {
-    stripeMock.confirmPayment.mockRejectedValueOnce(new Error("network down"));
+describe("hosted payment", () => {
+  it("enables Pay without loading Stripe.js or supplying a client secret", () => {
     render(<PaymentStep payment={payment} totalCents={3499} />);
-
-    const button = await screen.findByRole("button", { name: "Pay $34.99" });
-    fireEvent.click(button);
-
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Payment could not be completed. Please try again.",
-    );
     expect(screen.getByRole("button", { name: "Pay $34.99" })).toBeEnabled();
+    expect(document.querySelector('iframe')).toBeNull();
   });
-
-  it("shows Stripe validation errors and clears the pending state", async () => {
-    stripeMock.confirmPayment.mockResolvedValueOnce({
-      error: { message: "Your card was declined." },
-    });
+  it("prevents duplicate submissions and enables retry after a network failure", async () => {
+    let reject!: (error: Error) => void;
+    vi.mocked(apiFetch).mockReturnValueOnce(new Promise((_resolve, fail) => { reject = fail; }));
     render(<PaymentStep payment={payment} totalCents={3499} />);
-
-    fireEvent.click(await screen.findByRole("button", { name: "Pay $34.99" }));
-
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Your card was declined.",
-    );
-    expect(screen.getByRole("button", { name: "Pay $34.99" })).toBeEnabled();
+    const button = screen.getByRole("button", { name: "Pay $34.99" });
+    fireEvent.click(button); fireEvent.click(button);
+    expect(apiFetch).toHaveBeenCalledTimes(1);
+    expect(button).toBeDisabled();
+    await act(async () => reject(new Error("Connection lost")));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Connection lost");
+    expect(button).toBeEnabled();
+    expect(apiFetch).toHaveBeenCalledWith('/orders/order-1/checkout', expect.objectContaining({ method: 'POST' }));
   });
-
-  it("recovers when Stripe never resolves", async () => {
+  it("aborts a hanging checkout request and allows retry", async () => {
     vi.useFakeTimers();
-    stripeMock.confirmPayment.mockReturnValueOnce(new Promise(() => {}));
+    vi.mocked(apiFetch).mockImplementationOnce((_path, init) => new Promise((_resolve, reject) => {
+      init!.signal!.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));
+    }));
     render(<PaymentStep payment={payment} totalCents={3499} />);
-
     fireEvent.click(screen.getByRole("button", { name: "Pay $34.99" }));
-    await act(async () => {
-      vi.advanceTimersByTime(PAYMENT_TIMEOUT_MS);
-      await Promise.resolve();
-    });
-
-    expect(screen.getByRole("alert")).toHaveTextContent(
-      "Payment confirmation timed out.",
-    );
+    await act(async () => { vi.advanceTimersByTime(PAYMENT_TIMEOUT_MS); });
+    expect(screen.getByRole("alert")).toHaveTextContent("Checkout took too long");
     expect(screen.getByRole("button", { name: "Pay $34.99" })).toBeEnabled();
+  });
+  it("refuses a non-Stripe redirect", async () => {
+    vi.mocked(apiFetch).mockResolvedValueOnce(new Response(JSON.stringify({ url: 'https://example.com/pay' })));
+    render(<PaymentStep payment={payment} totalCents={3499} />);
+    fireEvent.click(screen.getByRole("button", { name: "Pay $34.99" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Could not open secure checkout");
+  });
+  it("does not claim success when the order is no longer payable", async () => {
+    vi.mocked(apiFetch).mockResolvedValueOnce(new Response('{}', { status: 409 }));
+    render(<PaymentStep payment={payment} totalCents={3499} />);
+    fireEvent.click(screen.getByRole("button", { name: "Pay $34.99" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Check My orders");
   });
 });

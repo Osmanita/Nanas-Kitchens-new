@@ -72,7 +72,9 @@ public class AgentService {
                 .content()
                 .map(delta -> toEvent("text", delta));
 
-        return textDeltas.concatWith(Mono.just(toEvent("done", null)));
+        return textDeltas.timeout(java.time.Duration.ofSeconds(40))
+                .onErrorResume(error -> Mono.just(toEvent("error", "Nana could not respond. Please try again.")))
+                .concatWith(Mono.just(toEvent("done", null)));
     }
 
     /** Seller-side menu builder: same SSE shape, seller tools and prompt instead of the ordering ones. */

@@ -1,142 +1,76 @@
 "use client";
 
-/** Story 3.4 — Stripe PaymentElement over the clientSecret POST /orders returned. The pending
- * order already holds the portions; paying settles it via the payment_intent.succeeded
- * webhook. NFR6: the card form is Stripe's — no PAN ever reaches our servers.
- *
- * Shared by checkout and chat: both can receive {requiresPayment: true} from the same
- * endpoint, so neither may treat a pending order as placed. */
-import { Elements, PaymentElement, useElements, useStripe } from "@stripe/react-stripe-js";
-import { loadStripe } from "@stripe/stripe-js";
-import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useRef, useState } from "react";
+import { apiFetch } from "../../lib/api";
 import { money } from "../../lib/cart";
 
-export const PAYMENT_TIMEOUT_MS = 45_000;
+export const PAYMENT_TIMEOUT_MS = 20_000;
 
 export interface PendingPayment {
   orderId: string;
-  clientSecret: string;
-  publishableKey: string;
+  // Older responses include these; hosted Checkout needs neither in the browser.
+  clientSecret?: string;
+  publishableKey?: string;
 }
 
-export default function PaymentStep({
-  payment,
-  totalCents,
-  onPaid,
-}: {
+/** Top-level Stripe Checkout: Pay never depends on a third-party iframe.
+ * The backend reuses the pending order; only the signed webhook confirms payment. */
+export default function PaymentStep({ payment, totalCents }: {
   payment: PendingPayment;
   totalCents: number;
-  /** Runs after Stripe settles, before the redirect to the order page. Checkout uses it to
-   * empty the cart; the chat flow has no cart to clear and omits it. */
-  onPaid?: () => void;
 }) {
-  const stripePromise = useMemo(() => loadStripe(payment.publishableKey), [payment.publishableKey]);
-  if (!payment.clientSecret || !payment.publishableKey) {
-    return (
-      <div className="card" style={{ marginTop: 16, borderColor: "var(--brand-orange)" }}>
-        <h2 style={{ fontSize: 17, color: "var(--brand-green)", marginTop: 0 }}>Payment</h2>
-        <div className="form-error" role="alert">
-          Payment could not be initialized. Please return to your order and try again.
-        </div>
-      </div>
-    );
-  }
-  return (
-    <div className="card" style={{ marginTop: 16, borderColor: "var(--brand-orange)" }}>
-      <h2 style={{ fontSize: 17, color: "var(--brand-green)", marginTop: 0 }}>Payment</h2>
-      <Elements
-        stripe={stripePromise}
-        options={{
-          clientSecret: payment.clientSecret,
-          appearance: { variables: { colorPrimary: "#e8720c" } },
-        }}
-      >
-        <PaymentForm orderId={payment.orderId} totalCents={totalCents} onPaid={onPaid} />
-      </Elements>
-    </div>
-  );
-}
-
-function PaymentForm({
-  orderId,
-  totalCents,
-  onPaid,
-}: {
-  orderId: string;
-  totalCents: number;
-  onPaid?: () => void;
-}) {
-  const stripe = useStripe();
-  const elements = useElements();
-  const router = useRouter();
-  const [payError, setPayError] = useState<string | null>(null);
-  const [paying, setPaying] = useState(false);
-  const [elementReady, setElementReady] = useState(false);
+  const [opening, setOpening] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const inFlight = useRef(false);
 
   async function pay() {
-    if (!stripe || !elements || !elementReady || paying) return;
-    setPaying(true);
-    setPayError(null);
-    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    if (inFlight.current) return;
+    inFlight.current = true;
+    setOpening(true);
+    setError(null);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), PAYMENT_TIMEOUT_MS);
     try {
-      // Cards settle inline; redirect-based methods return here via return_url. Either way
-      // the order page shows "payment processing" until the webhook confirms it. The timeout
-      // prevents a blocked Stripe iframe/network request from leaving the UI stuck forever.
-      const result = await Promise.race([
-        stripe.confirmPayment({
-          elements,
-          confirmParams: { return_url: `${window.location.origin}/orders/${orderId}` },
-          redirect: "if_required",
-        }),
-        new Promise<never>((_, reject) => {
-          timeoutId = setTimeout(
-            () => reject(new Error("PAYMENT_TIMEOUT")),
-            PAYMENT_TIMEOUT_MS,
-          );
-        }),
-      ]);
-      if (result.error) {
-        setPayError(result.error.message ?? "Payment failed — try another payment method.");
-        return;
+      const response = await apiFetch(`/orders/${encodeURIComponent(payment.orderId)}/checkout`, {
+        method: "POST", signal: controller.signal,
+      });
+      const body = await response.json();
+      if (!response.ok) {
+        throw new Error(response.status === 409
+          ? "This order is no longer awaiting payment. Check My orders for its status."
+          : "Could not open secure checkout. Please try again.");
       }
-      onPaid?.();
-      router.push(`/orders/${orderId}`);
-    } catch (error) {
-      setPayError(
-        error instanceof Error && error.message === "PAYMENT_TIMEOUT"
-          ? "Payment confirmation timed out. Check your connection and try again."
-          : "Payment could not be completed. Please try again.",
-      );
+      const url = new URL(body.url);
+      if (url.protocol !== "https:" || url.hostname !== "checkout.stripe.com") {
+        throw new Error("Could not open secure checkout. Please try again.");
+      }
+      sessionStorage.setItem("checkout_order", payment.orderId);
+      window.location.assign(url.href);
+    } catch (failure) {
+      setError(controller.signal.aborted
+        ? "Checkout took too long to respond. Please try again — your order will not be duplicated."
+        : failure instanceof Error ? failure.message : "Could not open secure checkout. Please try again.");
     } finally {
-      if (timeoutId) clearTimeout(timeoutId);
-      setPaying(false);
+      clearTimeout(timeout);
+      inFlight.current = false;
+      setOpening(false);
     }
   }
 
   return (
-    <>
-      {payError && (
-        <div className="form-error" role="alert">
-          {payError}
-        </div>
-      )}
-      <PaymentElement
-        onReady={() => setElementReady(true)}
-        onLoadError={(event) => {
-          setElementReady(false);
-          setPayError(event.error.message ?? "The payment form could not load. Please try again.");
-        }}
-      />
-      <button
-        type="button"
-        className="btn-primary"
-        style={{ marginTop: 16 }}
-        disabled={!stripe || !elements || !elementReady || paying}
-        onClick={pay}
-      >
-        {paying ? "Paying…" : `Pay ${money(totalCents)}`}
+    <section className="card" aria-label="Payment" style={{ marginTop: 16, borderColor: "var(--brand-green)" }}>
+      <h2 style={{ fontSize: 17, color: "var(--brand-green)", marginTop: 0 }}>Payment</h2>
+      <p style={{ fontSize: 14, lineHeight: 1.6, color: "var(--brand-muted)" }}>
+        Continue to Stripe’s secure payment page to enter your card details.
+        You’ll return here after payment.
+      </p>
+      {error && <div className="form-error" role="alert">{error}</div>}
+      <button type="button" className="btn-primary" disabled={opening} onClick={pay}>
+        {opening ? "Opening secure checkout…" : `Pay ${money(totalCents)}`}
       </button>
-    </>
+      <p style={{ margin: "10px 0 0", fontSize: 12, color: "var(--brand-muted)" }}>
+        Nothing is charged until you complete payment on Stripe.
+      </p>
+    </section>
   );
 }

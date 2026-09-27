@@ -35,6 +35,18 @@ public interface PaymentProvider {
     /** Client-side key for the payment sheet; null when the provider needs no client step. */
     String publishableKey();
 
+    /** Hosted checkout for browsers that cannot load embedded payment frames. */
+    default Checkout createCheckout(String orderId, int amountCents) {
+        throw new UnsupportedOperationException("Hosted checkout is not available");
+    }
+
+    default Checkout retrieveCheckout(String sessionId) {
+        throw new UnsupportedOperationException("Hosted checkout is not available");
+    }
+
+    record Checkout(String id, String url) {
+    }
+
     record Intent(String id, String clientSecret, String status) {
     }
 }

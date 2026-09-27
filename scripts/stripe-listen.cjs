@@ -23,7 +23,7 @@ if (!/^\d+$/.test(port) || Number(port) < 1 || Number(port) > 65535) throw new E
 
 const child = spawn(executable, [
   'listen', '--skip-update', '--events-from', '@self',
-  '--events', 'payment_intent.succeeded,payment_intent.payment_failed,payment_intent.canceled',
+  '--events', 'payment_intent.succeeded,payment_intent.payment_failed,payment_intent.canceled,checkout.session.completed,checkout.session.async_payment_succeeded,checkout.session.async_payment_failed,checkout.session.expired',
   '--forward-to', `http://localhost:${port}/webhooks/stripe`,
 ], { env: cliEnv, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
 

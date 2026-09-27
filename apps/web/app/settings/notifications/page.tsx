@@ -8,6 +8,9 @@ import { useEffect, useState } from "react";
 import { apiFetch, ensureSession, Session } from "../../../lib/api";
 import PhoneSettingsCard from "../../components/PhoneSettingsCard";
 
+import { PageIntro } from "../../components/PageKit";
+import styles from "../../marketplace.module.css";
+
 interface Grid {
   channels: string[]; // ["email", "push"]
   categories: { category: string; channels: Record<string, boolean> }[];
@@ -85,7 +88,7 @@ export default function NotificationSettingsPage() {
 
   if (session === undefined || (session && grid === undefined)) {
     return (
-      <main style={{ maxWidth: 560, margin: "0 auto", padding: "32px 24px" }}>
+      <main className={`${styles.page} ${styles.compact} ${styles.portal}`}>
         <div className="skeleton" style={{ height: 200 }} />
       </main>
     );
@@ -94,12 +97,8 @@ export default function NotificationSettingsPage() {
   if (!session) return null; // redirecting
 
   return (
-    <main style={{ maxWidth: 560, margin: "0 auto", padding: "32px 24px" }}>
-      <h1 style={{ margin: "0 0 4px", fontSize: 26, color: "var(--brand-green)" }}>Notifications</h1>
-      <p style={{ margin: "0 0 20px", color: "var(--brand-muted)" }}>
-        Choose how we reach you. The in-app bell always shows everything — these control
-        email and push.
-      </p>
+    <main className={`${styles.page} ${styles.compact} ${styles.portal}`}>
+      <PageIntro eyebrow="Your account" title="Keep in touch, your way." description="Choose which updates reach you by email and push. All updates remain available in your notification bell." />
 
       <section className="card">
         <div

@@ -221,6 +221,10 @@ public class MenusService {
     }
 
     private void requireDraft(String kitchenId, String menuDayId) {
+        if (db.sql("SELECT count(*) FROM \"Poll\" WHERE \"menuDayId\" = :id AND \"finalizedAt\" IS NULL")
+                .param("id", menuDayId).query(Integer.class).single() > 0) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "POLL_MENU_MANAGED");
+        }
         String status = db.sql("""
                 SELECT status::text FROM "MenuDay" WHERE id = :id AND "kitchenId" = :kitchenId
                 """)

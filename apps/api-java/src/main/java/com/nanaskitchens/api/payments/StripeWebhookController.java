@@ -54,12 +54,32 @@ public class StripeWebhookController {
             case "payment_intent.payment_failed" ->
                     payments.releaseFailedPayment(intentId(event), "payment_failed");
             case "payment_intent.canceled" -> payments.releaseFailedPayment(intentId(event), "canceled");
+            case "checkout.session.completed", "checkout.session.async_payment_succeeded" -> {
+                var session = checkoutSession(event);
+                yield "paid".equals(session.getPaymentStatus())
+                        ? payments.markCheckoutPaid(session.getId(), session.getPaymentIntent(),
+                                session.getAmountTotal(), session.getCurrency())
+                        : Map.of("applied", false);
+            }
+            case "checkout.session.expired", "checkout.session.async_payment_failed" ->
+                    payments.releaseFailedPayment(checkoutSession(event).getId(), event.getType());
             default -> Map.of("ignored", true, "type", event.getType());
         };
     }
 
     private static String intentId(Event event) {
-        StripeObject object = event.getDataObjectDeserializer().getObject().orElseGet(() -> {
+        StripeObject object = eventObject(event);
+        if (object instanceof PaymentIntent intent) return intent.getId();
+        throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "UNEXPECTED_EVENT_OBJECT");
+    }
+
+    private static com.stripe.model.checkout.Session checkoutSession(Event event) {
+        if (eventObject(event) instanceof com.stripe.model.checkout.Session session) return session;
+        throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "UNEXPECTED_EVENT_OBJECT");
+    }
+
+    private static StripeObject eventObject(Event event) {
+        return event.getDataObjectDeserializer().getObject().orElseGet(() -> {
             try {
                 // API-version drift between Stripe and the SDK — force-deserialize; the id
                 // field is stable across versions, which is all we read.
@@ -68,9 +88,5 @@ public class StripeWebhookController {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "EVENT_UNPARSEABLE");
             }
         });
-        if (object instanceof PaymentIntent intent) {
-            return intent.getId();
-        }
-        throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "UNEXPECTED_EVENT_OBJECT");
     }
 }

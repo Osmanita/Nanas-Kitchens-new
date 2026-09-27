@@ -6,8 +6,16 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { apiFetch } from "../../../lib/api";
-import { money } from "../../../lib/cart";
-import { isWithinReviewWindow, REVIEW_WINDOW_MONTHS } from "../../../lib/reviewWindow";
+import { clearCart, money } from "../../../lib/cart";
+import { pickupDay } from "../../../lib/polls";
+import PaymentStep from "../../components/PaymentStep";
+import {
+  isWithinReviewWindow,
+  REVIEW_WINDOW_MONTHS,
+} from "../../../lib/reviewWindow";
+
+import { PageIntro, OrderStatus } from "../../components/PageKit";
+import styles from "../../marketplace.module.css";
 
 interface OrderItem {
   id: string;
@@ -35,6 +43,7 @@ interface OrderDetail {
   kitchenId: string;
   kitchenName: string;
   pickupAddress: string | null;
+  pickupTimeZone?: string;
   deliveryJob: DeliveryJob | null;
 }
 
@@ -42,17 +51,6 @@ interface Review {
   rating: number;
   comment: string | null;
 }
-
-const STATUS_LABEL: Record<string, string> = {
-  pending: "Payment processing…",
-  confirmed: "Confirmed — waiting for the kitchen to accept",
-  accepted: "Accepted by the kitchen",
-  preparing: "Being prepared",
-  ready: "Ready",
-  completed: "Completed",
-  declined: "Declined by the kitchen",
-  cancelled: "Cancelled",
-};
 
 // Mirrors OrdersService.CANCELLABLE — once the kitchen has accepted, the food is being
 // cooked and the server rejects the cancel (NOT_CANCELLABLE). Keep the two in step.
@@ -62,6 +60,8 @@ export default function OrderPage() {
   const { id } = useParams<{ id: string }>();
   const [order, setOrder] = useState<OrderDetail | null | "error">(null);
   const [cancelling, setCancelling] = useState(false);
+  const [cancelPrompt, setCancelPrompt] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   async function load() {
     try {
@@ -88,11 +88,31 @@ export default function OrderPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [order]);
 
+  useEffect(() => {
+    if (
+      !order ||
+      order === "error" ||
+      ["pending", "cancelled", "declined"].includes(order.status)
+    )
+      return;
+    if (sessionStorage.getItem("checkout_cart_order") === order.id) {
+      clearCart();
+      sessionStorage.removeItem("checkout_cart_order");
+    }
+  }, [order]);
+
   async function cancel() {
     setCancelling(true);
     try {
-      await apiFetch(`/orders/${id}/cancel`, { method: "POST" });
+      const res = await apiFetch(`/orders/${id}/cancel`, { method: "POST" });
+      if (!res.ok) throw new Error("Cancellation failed");
+      setCancelPrompt(false);
+      setActionError(null);
       await load();
+    } catch {
+      setActionError(
+        "We couldn’t cancel this order. It may already be in preparation. Refresh its status and try again.",
+      );
     } finally {
       setCancelling(false);
     }
@@ -100,7 +120,7 @@ export default function OrderPage() {
 
   if (order === null) {
     return (
-      <main style={{ maxWidth: 640, margin: "0 auto", padding: "32px 24px" }}>
+      <main className={`${styles.page} ${styles.compact}`}>
         <div className="skeleton" style={{ height: 180 }} />
       </main>
     );
@@ -108,7 +128,7 @@ export default function OrderPage() {
 
   if (order === "error") {
     return (
-      <main style={{ maxWidth: 640, margin: "0 auto", padding: "32px 24px" }}>
+      <main className={`${styles.page} ${styles.compact}`}>
         <div className="form-error" role="alert">
           Could not load this order. You can only view your own orders.
         </div>
@@ -118,106 +138,247 @@ export default function OrderPage() {
   }
 
   const readySlot = new Date(order.readySlot);
-
+  const closed = ["cancelled", "declined"].includes(order.status);
+  const stage =
+    (
+      {
+        pending: 0,
+        confirmed: 1,
+        accepted: 2,
+        preparing: 2,
+        ready: 3,
+        completed: 4,
+      } as Record<string, number>
+    )[order.status] ?? -1;
+  const stages = [
+    ["Payment", "Your order begins once payment is confirmed."],
+    ["Kitchen confirmation", "The cook will review and accept your order."],
+    ["In the kitchen", "Your meal is being prepared."],
+    [
+      order.fulfillment === "pickup"
+        ? "Ready to collect"
+        : "Ready for delivery",
+      "Freshly made and ready to go.",
+    ],
+    ["Enjoy your meal", "Your order is complete."],
+  ];
+  const itemSubtotal = order.items.reduce(
+    (sum, item) => sum + item.unitPriceCents * item.qty,
+    0,
+  );
   return (
-    <main style={{ maxWidth: 640, margin: "0 auto", padding: "32px 24px" }}>
-      <div className="card" style={{ textAlign: "center", padding: "28px 24px", marginBottom: 16 }}>
-        <p style={{ fontSize: 40, margin: 0 }}>{order.status === "pending" ? "⏳" : "🎉"}</p>
-        <h1 style={{ margin: "8px 0 4px", fontSize: 22, color: "var(--brand-green)" }}>
-          {order.status === "pending" ? "Finishing your payment…" : "Order placed!"}
-        </h1>
-        <p style={{ color: "var(--brand-muted)", margin: 0 }}>{order.kitchenName}</p>
-      </div>
-
-      <div className="card" style={{ marginBottom: 16 }}>
-        <div style={{ marginBottom: 12, display: "flex", gap: 6, flexWrap: "wrap" }}>
-          <span className="badge portions">{STATUS_LABEL[order.status] ?? order.status}</span>
-          {/* FR21 — captured payments come back automatically on decline/cancel. */}
-          {order.refundedAt && (
-            <span className="badge hygiene">
-              💸 {money(order.totalCents)} refunded · {new Date(order.refundedAt).toLocaleDateString()}
-            </span>
+    <main className={`${styles.page} ${styles.compact}`}>
+      <Link href="/orders" className={styles.back}>
+        ← All your orders
+      </Link>
+      <PageIntro
+        eyebrow={`Order · ${order.id.slice(0, 8)}`}
+        title={
+          closed
+            ? "This order is closed."
+            : order.status === "pending"
+              ? "One last step."
+              : order.status === "completed"
+                ? "Hope it tasted like home."
+                : "Your meal is in good hands."
+        }
+        description={order.kitchenName}
+      >
+        <OrderStatus status={order.status} />
+      </PageIntro>
+      <div className={styles.detailGrid}>
+        <div className={styles.stack}>
+          {order.status === "pending" && (
+            <PaymentStep
+              payment={{ orderId: order.id }}
+              totalCents={order.totalCents}
+            />
           )}
-        </div>
-        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
-          <span style={{ color: "var(--brand-muted)" }}>Ready at</span>
-          <strong>
-            {readySlot.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-          </strong>
-        </div>
-        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
-          <span style={{ color: "var(--brand-muted)" }}>Fulfillment</span>
-          <strong style={{ textTransform: "capitalize" }}>{order.fulfillment}</strong>
-        </div>
-
-        {order.fulfillment === "pickup" && order.pickupAddress && (
-          <div style={{ marginTop: 10, padding: 12, background: "#fdf0e3", borderRadius: 10 }}>
-            <div style={{ fontSize: 13, color: "var(--brand-muted)" }}>Pickup address</div>
-            <strong>{order.pickupAddress}</strong>
-          </div>
-        )}
-
-        {order.fulfillment === "delivery" && (
-          <div style={{ marginTop: 10, padding: 12, background: "#fdf0e3", borderRadius: 10 }}>
-            {order.deliveryJob?.trackingUrl ? (
-              <a href={order.deliveryJob.trackingUrl} target="_blank" rel="noreferrer">
-                Track your courier →
-              </a>
+          <section className={styles.panel} aria-label="Order progress">
+            <h2>{closed ? "Order update" : "From their kitchen to you"}</h2>
+            {closed ? (
+              <p className={styles.muted}>
+                This order won’t be prepared. You can browse nearby kitchens
+                whenever you’re ready for another meal.
+              </p>
             ) : (
-              <span style={{ color: "var(--brand-muted)", fontSize: 14 }}>
-                A courier tracking link appears once the kitchen marks your order ready.
-              </span>
+              <ol className={styles.progress}>
+                {stages.map(([label, description], i) => (
+                  <li
+                    key={label}
+                    data-done={i < stage || order.status === "completed"}
+                    aria-current={i === stage ? "step" : undefined}
+                  >
+                    <span aria-hidden="true">
+                      {i < stage || order.status === "completed" ? "✓" : i + 1}
+                    </span>
+                    <div>
+                      {label}
+                      {i === stage && <small>{description}</small>}
+                    </div>
+                  </li>
+                ))}
+              </ol>
             )}
-          </div>
-        )}
-      </div>
-
-      <div className="card" style={{ marginBottom: 16 }}>
-        {order.items.map((it) => (
-          <div key={it.id} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0" }}>
-            <span>
-              {it.qty} × {it.menuItem.dish.name}
-            </span>
-            <strong>{money(it.unitPriceCents * it.qty)}</strong>
-          </div>
-        ))}
-        <hr style={{ border: "none", borderTop: "1px solid var(--brand-border)", margin: "10px 0" }} />
-        <div style={{ display: "flex", justifyContent: "space-between" }}>
-          <strong>Total</strong>
-          <strong>{money(order.totalCents)}</strong>
+            <dl className={styles.infoStrip}>
+              <div>
+                <dt>Ready time</dt>
+                <dd>
+                  {readySlot.toLocaleTimeString([], {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })}
+                </dd>
+                <p className={styles.muted}>
+                  {readySlot.toLocaleDateString([], {
+                    month: "short",
+                    day: "numeric",
+                  })}
+                </p>
+              </div>
+              <div>
+                <dt>Getting your meal</dt>
+                <dd>
+                  {order.fulfillment === "pickup"
+                    ? "Kitchen pickup"
+                    : "Delivery to you"}
+                </dd>
+              </div>
+            </dl>
+            {!closed &&
+              order.fulfillment === "pickup" &&
+              order.pickupAddress && (
+                <div className={styles.note}>
+                  <strong>Order received.</strong>
+                  <p>Collect your meal {order.pickupTimeZone
+                    ? pickupDay(order.readySlot.slice(0, 10), order.pickupTimeZone)
+                    : readySlot.toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" })} at {order.readySlot.slice(11, 16)} (kitchen time).</p>
+                  <strong>Pickup address</strong>
+                  <br />
+                  <address style={{ fontStyle: "normal" }}>{order.pickupAddress}</address>
+                  <p><a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(order.pickupAddress)}`} target="_blank" rel="noreferrer">Get directions →</a></p>
+                </div>
+              )}
+            {!closed &&
+              order.status !== "completed" &&
+              order.fulfillment === "delivery" && (
+                <div className={styles.note}>
+                  {order.deliveryJob?.trackingUrl ? (
+                    <a
+                      href={order.deliveryJob.trackingUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Track your courier →
+                    </a>
+                  ) : (
+                    "Your courier tracking link will appear here when the kitchen marks your meal ready."
+                  )}
+                </div>
+              )}
+            {order.refundedAt && (
+              <div className={styles.note}>
+                {money(order.totalCents)} refunded ·{" "}
+                {new Date(order.refundedAt).toLocaleDateString()}
+              </div>
+            )}
+            {!closed && order.status !== "completed" && (
+              <button className={styles.secondary} onClick={load}>
+                Refresh status
+              </button>
+            )}
+          </section>
+          {order.status === "completed" && <ReviewCard order={order} />}
         </div>
+        <aside className={styles.stack}>
+          <section className={styles.panel}>
+            <h2>On your table</h2>
+            {order.items.map((it) => (
+              <div key={it.id} className={styles.receiptItem}>
+                {it.menuItem.dish.photo && (
+                  <img
+                    src={it.menuItem.dish.photo}
+                    alt={it.menuItem.dish.name}
+                  />
+                )}
+                <span>
+                  {it.qty} × {it.menuItem.dish.name}
+                </span>
+                <strong>{money(it.unitPriceCents * it.qty)}</strong>
+              </div>
+            ))}
+            {order.totalCents !== itemSubtotal && (
+              <div className={styles.receiptItem}>
+                <span>Delivery &amp; tip</span>
+                <strong>{money(order.totalCents - itemSubtotal)}</strong>
+              </div>
+            )}
+            <div className={styles.receiptTotal}>
+              <strong>Total</strong>
+              <strong>{money(order.totalCents)}</strong>
+            </div>
+            <p className={styles.muted}>
+              Ordered{" "}
+              {new Date(order.createdAt).toLocaleDateString([], {
+                month: "long",
+                day: "numeric",
+                year: "numeric",
+              })}
+            </p>
+          </section>
+          {CANCELLABLE.has(order.status) && (
+            <div>
+              {cancelPrompt ? (
+                <div className={styles.note}>
+                  <p>
+                    Cancel this order? Your reserved portions will be released.
+                  </p>
+                  <div className={styles.actions}>
+                    <button
+                      className={styles.danger}
+                      onClick={cancel}
+                      disabled={cancelling}
+                    >
+                      {cancelling ? "Cancelling…" : "Yes, cancel order"}
+                    </button>
+                    <button
+                      className={styles.secondary}
+                      disabled={cancelling}
+                      onClick={() => setCancelPrompt(false)}
+                    >
+                      Keep order
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  className={styles.danger}
+                  onClick={() => setCancelPrompt(true)}
+                >
+                  Cancel order
+                </button>
+              )}
+              {actionError && (
+                <p className="form-error" role="alert">
+                  {actionError}
+                </p>
+              )}
+            </div>
+          )}
+          <Link href="/" className={styles.textLink}>
+            Explore nearby kitchens →
+          </Link>
+        </aside>
       </div>
-
-      {order.status === "completed" && <ReviewCard order={order} />}
-
-      {CANCELLABLE.has(order.status) && (
-        <button
-          onClick={cancel}
-          disabled={cancelling}
-          style={{
-            width: "100%",
-            padding: "12px 20px",
-            background: "transparent",
-            border: "1px solid var(--brand-border)",
-            borderRadius: 10,
-            fontSize: 15,
-            cursor: "pointer",
-            color: "#b91c1c",
-          }}
-        >
-          {cancelling ? "Cancelling…" : "Cancel order"}
-        </button>
-      )}
-      <p style={{ textAlign: "center", marginTop: 16 }}>
-        <Link href="/">Back to nearby kitchens</Link>
-      </p>
     </main>
   );
 }
 
 /** Story 6.1 (FR16) — rate the kitchen once the order is completed, once per order. */
 function ReviewCard({ order }: { order: OrderDetail }) {
-  const [existing, setExisting] = useState<Review | null | undefined>(undefined);
+  const [existing, setExisting] = useState<Review | null | undefined>(
+    undefined,
+  );
   const [rating, setRating] = useState(0);
   const [hover, setHover] = useState(0);
   const [comment, setComment] = useState("");
@@ -227,7 +388,10 @@ function ReviewCard({ order }: { order: OrderDetail }) {
   useEffect(() => {
     let cancelled = false;
     apiFetch(`/orders/${order.id}/review`)
-      .then(async (res) => !cancelled && setExisting(res.ok ? await res.json() : null))
+      .then(
+        async (res) =>
+          !cancelled && setExisting(res.ok ? await res.json() : null),
+      )
       .catch(() => !cancelled && setExisting(null));
     return () => {
       cancelled = true;
@@ -240,7 +404,11 @@ function ReviewCard({ order }: { order: OrderDetail }) {
     try {
       const res = await apiFetch(`/kitchens/${order.kitchenId}/reviews`, {
         method: "POST",
-        body: JSON.stringify({ orderId: order.id, rating, comment: comment.trim() || undefined }),
+        body: JSON.stringify({
+          orderId: order.id,
+          rating,
+          comment: comment.trim() || undefined,
+        }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -266,12 +434,27 @@ function ReviewCard({ order }: { order: OrderDetail }) {
   if (existing) {
     return (
       <div className="card" style={{ marginBottom: 16, textAlign: "center" }}>
-        <div style={{ fontSize: 22, letterSpacing: 2 }} aria-label={`Your rating: ${existing.rating} of 5`}>
+        <div
+          style={{ fontSize: 22, letterSpacing: 2 }}
+          aria-label={`Your rating: ${existing.rating} of 5`}
+        >
           {"★".repeat(existing.rating)}
-          <span style={{ color: "var(--brand-border)" }}>{"★".repeat(5 - existing.rating)}</span>
+          <span style={{ color: "var(--brand-border)" }}>
+            {"★".repeat(5 - existing.rating)}
+          </span>
         </div>
-        {existing.comment && <p style={{ margin: "8px 0 0", fontStyle: "italic" }}>“{existing.comment}”</p>}
-        <p style={{ margin: "8px 0 0", color: "var(--brand-muted)", fontSize: 14 }}>
+        {existing.comment && (
+          <p style={{ margin: "8px 0 0", fontStyle: "italic" }}>
+            “{existing.comment}”
+          </p>
+        )}
+        <p
+          style={{
+            margin: "8px 0 0",
+            color: "var(--brand-muted)",
+            fontSize: 14,
+          }}
+        >
           Thanks for reviewing {order.kitchenName}!
         </p>
       </div>
@@ -307,7 +490,10 @@ function ReviewCard({ order }: { order: OrderDetail }) {
               fontSize: 30,
               cursor: "pointer",
               padding: "0 2px",
-              color: n <= (hover || rating) ? "var(--brand-orange)" : "var(--brand-border)",
+              color:
+                n <= (hover || rating)
+                  ? "var(--brand-orange)"
+                  : "var(--brand-border)",
             }}
           >
             ★
@@ -328,7 +514,11 @@ function ReviewCard({ order }: { order: OrderDetail }) {
           {error}
         </div>
       )}
-      <button className="btn-primary" disabled={busy || rating === 0} onClick={submit}>
+      <button
+        className="btn-primary"
+        disabled={busy || rating === 0}
+        onClick={submit}
+      >
         {busy ? "Submitting…" : "Submit review"}
       </button>
     </div>

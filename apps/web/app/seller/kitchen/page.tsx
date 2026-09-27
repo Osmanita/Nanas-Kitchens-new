@@ -5,6 +5,8 @@
  * rest, never displayed back), and manage up to 10 gallery photos (upload ≤5 MB
  * jpeg/png/webp, remove, make cover). */
 import Link from "next/link";
+import { PageIntro } from "../../components/PageKit";
+import styles from "../../marketplace.module.css";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiFetch, ensureSession, Session } from "../../../lib/api";
@@ -168,7 +170,7 @@ export default function SellerKitchenPage() {
 
   if (session === undefined || (session?.role === "seller" && kitchen === undefined)) {
     return (
-      <main style={{ maxWidth: 720, margin: "0 auto", padding: "32px 24px" }}>
+      <main className={`${styles.page} ${styles.portal} ${styles.compact}`}>
         <div className="skeleton" style={{ height: 220 }} />
       </main>
     );
@@ -178,7 +180,7 @@ export default function SellerKitchenPage() {
 
   if (session.role !== "seller") {
     return (
-      <main style={{ maxWidth: 720, margin: "0 auto", padding: "32px 24px" }}>
+      <main className={`${styles.page} ${styles.portal} ${styles.compact}`}>
         <div className="form-error" role="alert">
           This page is for sellers. You are signed in as a {session.role}.
         </div>
@@ -189,7 +191,7 @@ export default function SellerKitchenPage() {
 
   if (kitchen === null) {
     return (
-      <main style={{ maxWidth: 720, margin: "0 auto", padding: "32px 24px" }}>
+      <main className={`${styles.page} ${styles.portal} ${styles.compact}`}>
         <div className="card" style={{ textAlign: "center", padding: 40 }}>
           <p style={{ fontSize: 36, margin: 0 }}>🏠</p>
           <p style={{ fontWeight: 600, margin: "8px 0 4px" }}>No kitchen yet</p>
@@ -205,12 +207,10 @@ export default function SellerKitchenPage() {
   }
 
   return (
-    <main style={{ maxWidth: 720, margin: "0 auto", padding: "32px 24px" }}>
-      <h1 style={{ margin: "0 0 4px", fontSize: 26, color: "var(--brand-green)" }}>Kitchen Profile</h1>
-      <p style={{ margin: "0 0 20px", color: "var(--brand-muted)" }}>
-        What buyers see on <Link href={`/kitchens/${kitchen.id}`}>your public page</Link> — your street
-        address is never shown there.
-      </p>
+    <main className={`${styles.page} ${styles.portal} ${styles.compact}`}>
+      <PageIntro eyebrow="Your kitchen / Profile" title="Let them meet the cook." description="Tell your story, share your food, and keep your kitchen details up to date.">
+        <Link href={`/kitchens/${kitchen.id}`} className={styles.secondary}>View public page →</Link>
+      </PageIntro>
 
       <section className="card">
         <h2 style={{ margin: "0 0 12px", fontSize: 20, color: "var(--brand-green)" }}>Details</h2>

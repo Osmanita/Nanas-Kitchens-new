@@ -7,11 +7,14 @@
  * Onboarding (create kitchen, FR1) and compliance attestation (FR2) happen inline
  * because un-attested kitchens cannot publish. */
 import Link from "next/link";
+import { PageIntro } from "../../components/PageKit";
+import styles from "../../marketplace.module.css";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { apiFetch, ensureSession, Session } from "../../../lib/api";
 import { CUISINES } from "../../../lib/cuisines";
 import { money } from "../../../lib/cart";
+import { validServiceDate } from "../../../lib/seller";
 import AddressAutocomplete, { AddressPick } from "../../components/AddressAutocomplete";
 
 interface Kitchen {
@@ -90,6 +93,11 @@ export default function SellerMenuPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+
+  useEffect(() => {
+    const requested = new URLSearchParams(window.location.search).get("date");
+    if (validServiceDate(requested)) setDate(requested);
+  }, []);
 
   useEffect(() => {
     ensureSession().then((s) => {
@@ -206,7 +214,7 @@ export default function SellerMenuPage() {
 
   if (session === undefined || (session?.role === "seller" && kitchen === undefined)) {
     return (
-      <main style={{ maxWidth: 860, margin: "0 auto", padding: "32px 24px" }}>
+      <main className={`${styles.page} ${styles.portal} ${styles.compact}`}>
         <div className="skeleton" style={{ height: 220 }} />
       </main>
     );
@@ -216,7 +224,7 @@ export default function SellerMenuPage() {
 
   if (session.role !== "seller") {
     return (
-      <main style={{ maxWidth: 720, margin: "0 auto", padding: "32px 24px" }}>
+      <main className={`${styles.page} ${styles.portal} ${styles.compact}`}>
         <div className="form-error" role="alert">
           This page is for sellers. You are signed in as a {session.role}.
         </div>
@@ -233,14 +241,10 @@ export default function SellerMenuPage() {
   const attested = !!kitchen!.complianceAttestedAt;
 
   return (
-    <main style={{ maxWidth: 860, margin: "0 auto", padding: "32px 24px" }}>
-      <h1 style={{ margin: "0 0 4px", fontSize: 26, color: "var(--brand-green)" }}>Menus &amp; Portions</h1>
-      <p style={{ margin: "0 0 12px", color: "var(--brand-muted)" }}>
-        {kitchen!.name} — build your daily menu, set portions and ready windows, then publish.
-      </p>
-      <p style={{ margin: "0 0 20px" }}>
-        <Link href="/seller/menu-chat">Build it by chatting instead →</Link>
-      </p>
+    <main className={`${styles.page} ${styles.portal} ${styles.compact}`}>
+      <PageIntro eyebrow="Your kitchen / Daily menu" title="What’s cooking today?" description={kitchen!.name + " — choose your dishes, set your portions, and let the neighborhood know."}>
+        <Link href="/seller/menu-chat" className={styles.secondary}>Plan with Nana →</Link>
+      </PageIntro>
 
       {!attested && <AttestationCard kitchenId={kitchen!.id} onAttested={loadKitchen} />}
 
@@ -509,7 +513,7 @@ export default function SellerMenuPage() {
         )}
       </section>
 
-      <PollsManager kitchenId={kitchen!.id} />
+      <section className={styles.panel} style={{ marginTop: 24 }}><h2>Plan tomorrow together</h2><p className={styles.muted}>Ask your neighbors what to cook and collect pre-orders before preparing your menu.</p><Link className={styles.button} href="/voting">Open tomorrow’s polls →</Link></section>
 
       <RequestsInbox kitchenId={kitchen!.id} />
     </main>
@@ -609,181 +613,6 @@ function RequestsInbox({ kitchenId }: { kitchenId: string }) {
   );
 }
 
-/** Story 6.2 (FR17) — seller-side poll authoring + live results. */
-function PollsManager({ kitchenId }: { kitchenId: string }) {
-  interface Poll {
-    id: string;
-    question: string;
-    options: string[];
-    tallies: number[];
-    totalVotes: number;
-    closed: boolean;
-    closesAt: string | null;
-  }
-  const [polls, setPolls] = useState<Poll[] | undefined>(undefined);
-  const [creating, setCreating] = useState(false);
-  const [question, setQuestion] = useState("");
-  const [options, setOptions] = useState<string[]>(["", ""]);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    const res = await apiFetch(`/kitchens/${kitchenId}/polls`);
-    if (res.ok) setPolls(await res.json());
-  }, [kitchenId]);
-
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  async function create() {
-    const cleaned = options.map((o) => o.trim()).filter(Boolean);
-    if (question.trim().length < 3 || cleaned.length < 2) {
-      setError("Add a question and at least two options.");
-      return;
-    }
-    setBusy(true);
-    setError(null);
-    const res = await apiFetch(`/kitchens/${kitchenId}/polls`, {
-      method: "POST",
-      body: JSON.stringify({ question: question.trim(), options: cleaned }),
-    });
-    setBusy(false);
-    if (!res.ok) {
-      setError("Could not create the poll.");
-      return;
-    }
-    setQuestion("");
-    setOptions(["", ""]);
-    setCreating(false);
-    load();
-  }
-
-  async function closePoll(id: string) {
-    await apiFetch(`/polls/${id}/close`, { method: "POST" });
-    load();
-  }
-
-  return (
-    <section className="card" style={{ marginTop: 24 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <h2 style={{ margin: 0, fontSize: 20, color: "var(--brand-green)" }}>Menu polls</h2>
-        <button className="btn-add" onClick={() => setCreating((c) => !c)}>
-          {creating ? "Cancel" : "+ New poll"}
-        </button>
-      </div>
-      <p style={{ margin: "4px 0 0", fontSize: 13, color: "var(--brand-muted)" }}>
-        Ask buyers what to cook next. Each buyer votes once.
-      </p>
-
-      {creating && (
-        <div
-          style={{
-            border: "1px solid var(--brand-border)",
-            borderRadius: 12,
-            padding: 16,
-            marginTop: 16,
-            background: "#fdf9f0",
-          }}
-        >
-          {error && (
-            <div className="form-error" role="alert">
-              {error}
-            </div>
-          )}
-          <label>
-            Question
-            <input
-              className="field"
-              placeholder="Which dish should I add next week?"
-              value={question}
-              onChange={(e) => setQuestion(e.target.value)}
-            />
-          </label>
-          <span style={{ fontSize: 14, fontWeight: 600 }}>Options</span>
-          {options.map((opt, i) => (
-            <div key={i} style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 6 }}>
-              <input
-                className="field"
-                style={{ margin: 0 }}
-                placeholder={`Option ${i + 1}`}
-                value={opt}
-                onChange={(e) => setOptions((os) => os.map((o, j) => (j === i ? e.target.value : o)))}
-              />
-              {options.length > 2 && (
-                <button
-                  className="btn-add"
-                  aria-label={`Remove option ${i + 1}`}
-                  onClick={() => setOptions((os) => os.filter((_, j) => j !== i))}
-                >
-                  ✕
-                </button>
-              )}
-            </div>
-          ))}
-          {options.length < 6 && (
-            <button className="btn-add" style={{ marginTop: 8 }} onClick={() => setOptions((os) => [...os, ""])}>
-              + Add option
-            </button>
-          )}
-          <div style={{ marginTop: 12 }}>
-            <button className="btn-primary" style={{ width: "auto" }} disabled={busy} onClick={create}>
-              {busy ? "Creating…" : "Publish poll"}
-            </button>
-          </div>
-        </div>
-      )}
-
-      <div style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 16 }}>
-        {polls?.length === 0 && !creating && (
-          <p style={{ margin: 0, color: "var(--brand-muted)", fontSize: 14 }}>No polls yet.</p>
-        )}
-        {polls?.map((poll) => (
-          <div key={poll.id} style={{ border: "1px solid var(--brand-border)", borderRadius: 12, padding: 14 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
-              <strong>{poll.question}</strong>
-              {poll.closed ? (
-                <span className="badge soldout">Closed</span>
-              ) : (
-                <button className="btn-add" onClick={() => closePoll(poll.id)}>
-                  Close
-                </button>
-              )}
-            </div>
-            <div style={{ marginTop: 8 }}>
-              {poll.options.map((opt, i) => {
-                const votes = poll.tallies[i] ?? 0;
-                const pct = poll.totalVotes ? Math.round((votes / poll.totalVotes) * 100) : 0;
-                return <PollBar key={i} label={opt} votes={votes} pct={pct} />;
-              })}
-            </div>
-            <p style={{ margin: "6px 0 0", fontSize: 12, color: "var(--brand-muted)" }}>
-              {poll.totalVotes} vote{poll.totalVotes === 1 ? "" : "s"}
-            </p>
-          </div>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-/** Horizontal result bar shared by the seller manager and the buyer poll card. */
-function PollBar({ label, votes, pct }: { label: string; votes: number; pct: number }) {
-  return (
-    <div style={{ margin: "4px 0" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 2 }}>
-        <span>{label}</span>
-        <span style={{ color: "var(--brand-muted)" }}>
-          {pct}% · {votes}
-        </span>
-      </div>
-      <div style={{ background: "var(--brand-border)", borderRadius: 999, height: 8, overflow: "hidden" }}>
-        <div style={{ width: `${pct}%`, height: "100%", background: "var(--brand-orange)" }} />
-      </div>
-    </div>
-  );
-}
-
 /** FR1 onboarding — shown until the seller has a kitchen. The address is geocoded
  * server-side (Story 1.3 AC1); manual lat/lng only appear after GEOCODING_FAILED (AC4). */
 function CreateKitchenCard({ onCreated }: { onCreated: () => void }) {
@@ -836,7 +665,7 @@ function CreateKitchenCard({ onCreated }: { onCreated: () => void }) {
     setForm((f) => ({ ...f, [key]: e.target.value }));
 
   return (
-    <main style={{ maxWidth: 560, margin: "0 auto", padding: "32px 24px" }}>
+    <main className={`${styles.page} ${styles.portal} ${styles.compact}`}>
       <form className="card" onSubmit={submit}>
         <h1 style={{ margin: "0 0 4px", fontSize: 24, color: "var(--brand-green)" }}>Set up your kitchen</h1>
         <p style={{ margin: "0 0 20px", color: "var(--brand-muted)", fontSize: 14 }}>

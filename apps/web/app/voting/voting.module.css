@@ -1,0 +1,272 @@
+.layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 260px;
+  gap: 40px;
+  align-items: start;
+}
+.list {
+  display: grid;
+  gap: 28px;
+  min-width: 0;
+}
+.tabs {
+  display: flex;
+  gap: 24px;
+  border-bottom: 1px solid var(--brand-border);
+  margin-bottom: 28px;
+}
+.tabs button {
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: none;
+  padding: 12px 0;
+  font-size: 14px;
+  color: var(--brand-muted);
+  cursor: pointer;
+}
+.tabs button[aria-pressed="true"] {
+  color: var(--brand-green);
+  border-color: var(--brand-green);
+  font-weight: 650;
+}
+.card {
+  padding: 26px;
+  border: 1px solid var(--brand-border);
+  background: var(--surface, #fffefb);
+  border-radius: 16px;
+  min-width: 0;
+}
+.card h2 {
+  font:
+    400 27px/1.2 Georgia,
+    serif;
+  color: var(--brand-green);
+  margin: 14px 0;
+}
+.heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+.heading a {
+  color: var(--brand-green);
+  text-underline-offset: 4px;
+}
+.badge {
+  background: var(--accent-soft);
+  color: var(--brand-green);
+  padding: 6px 9px;
+  border-radius: 5px;
+  font-size: 11px;
+  font-weight: 650;
+}
+.meta {
+  color: var(--brand-muted);
+  font-size: 12px;
+  line-height: 1.7;
+}
+.options {
+  display: grid;
+  gap: 10px;
+  border: 0;
+  padding: 0;
+  margin: 22px 0;
+  min-width: 0;
+}
+.options legend {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+.option {
+  display: block;
+  position: relative;
+  border: 1px solid var(--brand-border);
+  border-radius: 9px;
+  padding: 15px;
+  overflow: hidden;
+}
+label.option {
+  cursor: pointer;
+}
+.option[data-selected="true"] {
+  border-color: var(--brand-green);
+  background: #f1f4eb;
+}
+.optionLine {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+}
+.optionLine input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--brand-green);
+  flex-shrink: 0;
+}
+.optionLine strong {
+  flex: 1;
+  min-width: 0;
+}
+.optionLine span {
+  white-space: nowrap;
+}
+.bar {
+  height: 4px;
+  background: var(--brand-border);
+  border-radius: 4px;
+  margin-top: 12px;
+  overflow: hidden;
+}
+.bar span {
+  display: block;
+  background: #789168;
+  height: 100%;
+}
+.option small {
+  display: block;
+  color: var(--brand-muted);
+  font-size: 11px;
+  margin-top: 9px;
+}
+.form {
+  display: grid;
+  gap: 18px;
+}
+.form label {
+  display: grid;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 550;
+  min-width: 0;
+}
+.form input:not([type="checkbox"]),
+.form select {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--brand-border);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--brand-green);
+  font: inherit;
+  padding: 12px;
+  min-height: 44px;
+}
+.row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+.summary {
+  border-top: 1px solid var(--brand-border);
+  margin-top: 20px;
+  padding-top: 18px;
+  display: grid;
+  gap: 12px;
+}
+.summary p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.65;
+}
+.total {
+  display: flex;
+  justify-content: space-between;
+  font-size: 14px;
+}
+.notice {
+  background: var(--accent-soft);
+  border-radius: 9px;
+  padding: 18px;
+  font-size: 13px;
+  line-height: 1.7;
+}
+.notice p {
+  margin: 6px 0;
+}
+.notice strong {
+  color: var(--brand-green);
+}
+.aside {
+  border-top: 1px solid var(--brand-border);
+  padding-top: 22px;
+  position: sticky;
+  top: 110px;
+}
+.aside h2 {
+  font:
+    400 24px Georgia,
+    serif;
+  margin: 0 0 20px;
+}
+.aside ol {
+  padding-left: 20px;
+  font-size: 13px;
+  line-height: 1.8;
+  color: var(--brand-muted);
+}
+.aside li {
+  padding-left: 5px;
+  margin-bottom: 16px;
+}
+.aside strong {
+  color: var(--brand-green);
+  display: block;
+}
+.dishChecks {
+  display: grid;
+  gap: 10px;
+}
+.dishChecks label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--brand-border);
+  border-radius: 8px;
+  font-size: 13px;
+}
+.dishChecks input {
+  accent-color: var(--brand-green);
+}
+.dishChecks span {
+  flex: 1;
+}
+.location {
+  max-width: 280px;
+  text-align: left;
+}
+.location span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@media (max-width: 850px) {
+  .layout {
+    grid-template-columns: 1fr;
+    gap: 28px;
+  }
+  .aside {
+    position: static;
+  }
+}
+@media (max-width: 520px) {
+  .card {
+    padding: 20px 16px;
+  }
+  .row {
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+  .card h2 {
+    font-size: 25px;
+  }
+  .location {
+    max-width: 100%;
+  }
+}

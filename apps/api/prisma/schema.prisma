@@ -212,8 +212,20 @@ model Poll {
   closesAt  DateTime?
   createdAt DateTime   @default(now())
   votes     PollVote[]
+  serviceDate DateTime? @db.Date
+  timeZone String @default("America/New_York")
+  readyTimes String[] @default([])
+  dishIds String[] @default([])
+  prices Int[] @default([])
+  minimumPortions Int @default(3)
+  capacity Int @default(30)
+  menuDayId String?
+  menuDay MenuDay? @relation(fields: [menuDayId], references: [id])
+  cookingOptions Int[] @default([])
+  finalizedAt DateTime?
 
   @@index([kitchenId, createdAt])
+  @@unique([kitchenId, serviceDate])
 }
 
 model PollVote {
@@ -224,8 +236,16 @@ model PollVote {
   buyer       User     @relation(fields: [buyerId], references: [id])
   optionIndex Int
   createdAt   DateTime @default(now())
+  qty Int @default(1)
+  readyTime String?
+  status String @default("vote_only")
+  menuItemId String?
+  menuItem MenuItem? @relation(fields: [menuItemId], references: [id])
+  orderId String? @unique
+  order Order? @relation(fields: [orderId], references: [id])
 
   @@unique([pollId, buyerId]) // FR17: one vote per buyer per poll
+  @@index([buyerId, status])
 }
 
 // Story 6.3 (FR18): a buyer asks a kitchen for a dish/cuisine; the seller accepts
@@ -266,6 +286,7 @@ model MenuDay {
   status       MenuDayStatus @default(draft)
   readyWindows Json          // [{start:"17:00",end:"20:00",slotMinutes:30}]
   items        MenuItem[]
+  polls        Poll[]
   @@unique([kitchenId, date])
 }
 
@@ -278,12 +299,14 @@ model MenuItem {
   portionsTotal     Int
   portionsRemaining Int
   orderItems        OrderItem[]
+  pollPreorders     PollVote[]
 }
 
 model Order {
   id              String      @id @default(uuid())
   buyerId         String
   buyer           User        @relation(fields: [buyerId], references: [id])
+  pollPreorder    PollVote?
   kitchenId       String
   kitchen         Kitchen     @relation(fields: [kitchenId], references: [id])
   menuDayId       String

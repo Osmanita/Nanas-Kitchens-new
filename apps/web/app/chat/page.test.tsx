@@ -75,7 +75,7 @@ describe("chat interactions", () => {
           }),
         ),
       )
-      .mockResolvedValueOnce(reply("The kitchen’s menu is ready."));
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: "d1", date: "2026-09-26", readyWindows: [{start: "17:00", end: "20:00"}], items: [{ id: "m1", portionsRemaining: 4, dish: { name: "Sarma", priceCents: 1200 } }] })));
     render(<ChatPage />);
     fireEvent.click(screen.getByRole("button", { name: /A taste of home/ }));
     await waitFor(() => expect(apiFetch).toHaveBeenCalledTimes(1));
@@ -110,13 +110,9 @@ describe("chat interactions", () => {
     expect(kitchen).toBeEnabled();
     expect(screen.getByRole("log")).not.toHaveTextContent("```json");
     fireEvent.click(kitchen);
-    await screen.findByText("The kitchen’s menu is ready.");
-    const request = JSON.parse(
-      vi.mocked(apiFetch).mock.calls[1][1]!.body as string,
-    );
-    expect(request.messages.at(-1).content).toBe(
-      "Show me the menu for Ayse’s Kitchen",
-    );
+    await screen.findByRole("button", { name: "Add one Sarma" });
+    expect(vi.mocked(apiFetch).mock.calls[1][0]).toBe("/kitchens/k1/menu");
+    expect(apiFetch).toHaveBeenCalledTimes(2);
   });
 
   it("handles provider whitespace and an unfenced structured response", async () => {
@@ -161,7 +157,8 @@ describe("chat interactions", () => {
       .mockResolvedValueOnce(
         reply("Pick a dish.\n```json\n" + JSON.stringify(menu) + "\n```"),
       )
-      .mockResolvedValueOnce(reply("Would you like pickup or delivery?"));
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: "d1", date: "2026-09-26", items: [{id:"m1", portionsRemaining:2}] })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ summary: { items: [{dish:"Sarma", qty:2, unitPriceCents:1200}], totalCents:2400, fulfillment:"pickup", readySlot:"17:00" } })));
     render(<ChatPage />);
     fireEvent.click(screen.getByRole("button", { name: /A taste of home/ }));
     const add = await screen.findByRole("button", { name: "Add one Sarma" });
@@ -169,12 +166,34 @@ describe("chat interactions", () => {
     fireEvent.click(add);
     expect(add).toBeDisabled();
     expect(screen.getByText("$24.00")).toBeInTheDocument();
+    fireEvent.change(screen.getByRole("combobox", { name: "Fulfillment" }), { target: { value: "pickup" } });
     fireEvent.click(screen.getByRole("button", { name: "Add to order" }));
-    await screen.findByText("Would you like pickup or delivery?");
+    await screen.findByRole("button", { name: "Confirm order" });
     const request = JSON.parse(
-      vi.mocked(apiFetch).mock.calls[1][1]!.body as string,
+      vi.mocked(apiFetch).mock.calls[2][1]!.body as string,
     );
-    expect(request.messages.at(-1).content).toContain("2 x Sarma");
-    expect(request.messages.at(-1).content).toContain("[menuItemIds: m1]");
+    expect(vi.mocked(apiFetch).mock.calls[2][0]).toBe("/orders");
+    expect(request).toMatchObject({ confirm:false, items:[{menuItemId:"m1",qty:2}], fulfillment:"pickup" });
+    expect(screen.getByRole("log")).not.toHaveTextContent("menuItemIds");
+    expect(vi.mocked(apiFetch).mock.calls.filter(([path]) => path === "/chat/stream")).toHaveLength(1);
+  });
+
+  it("searches a saved location directly without waiting for Gemini", async () => {
+    localStorage.setItem("location", JSON.stringify({ lat:40.16, lng:-83.09, label:"Powell" }));
+    vi.mocked(apiFetch).mockResolvedValueOnce(new Response(JSON.stringify([{ id:"k1", name:"Ayse", cuisineTag:"turkish", portionsLeftToday:5, distanceMiles:1 }])));
+    render(<ChatPage />);
+    fireEvent.click(screen.getByRole("button", { name: /A taste of home/ }));
+    await screen.findByRole("button", { name: "View menu for Ayse" });
+    expect(vi.mocked(apiFetch).mock.calls[0][0]).toBe("/kitchens/search?lat=40.16&lng=-83.09&cuisine=turkish");
+    expect(apiFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("offers retry when the model streams an error event", async () => {
+    vi.mocked(apiFetch).mockResolvedValueOnce(new Response(new ReadableStream({ start(controller) {
+      controller.enqueue(event("error", "Timeout")); controller.close();
+    } })));
+    render(<ChatPage />);
+    fireEvent.click(screen.getByRole("button", { name: /A taste of home/ }));
+    expect(await screen.findByRole("button", { name: /Try again/ })).toBeEnabled();
   });
 });

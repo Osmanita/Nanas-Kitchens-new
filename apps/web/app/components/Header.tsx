@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { apiFetch, getSession, logout, Session } from "../../lib/api";
 import Icon from "./Icon";
+import SellerNav from "./SellerNav";
 import styles from "./Header.module.css";
 
 interface AppNotification {
@@ -12,7 +13,7 @@ interface AppNotification {
   type: string;
   title: string;
   body: string;
-  data: { orderId?: string; trackingUrl?: string; kitchenId?: string } | null;
+  data: { orderId?: string; trackingUrl?: string; kitchenId?: string; pollId?: string } | null;
   readAt: string | null;
   createdAt: string;
 }
@@ -21,6 +22,23 @@ export default function Header() {
   const [session, setSession] = useState<Session | null>(null);
   const router = useRouter();
   const pathname = usePathname();
+  const navRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    const nav = navRef.current;
+    if (!nav) return;
+    const revealCurrent = () => {
+      const active = nav.querySelector<HTMLElement>('[aria-current="page"]');
+      if (!active || nav.scrollWidth <= nav.clientWidth) return;
+      const item = active.getBoundingClientRect();
+      const container = nav.getBoundingClientRect();
+      nav.scrollLeft += item.left - container.left - (nav.clientWidth - item.width) / 2;
+    };
+    revealCurrent();
+    const observer = new ResizeObserver(revealCurrent);
+    observer.observe(nav);
+    return () => observer.disconnect();
+  }, [pathname, session?.role]);
 
   useEffect(() => {
     const sync = () => setSession(getSession());
@@ -34,17 +52,17 @@ export default function Header() {
   }, []);
 
   const links = [
-    { href: "/", label: "Home" },
+    { href: "/", label: session?.role === "seller" ? "Marketplace" : "Home" },
     { href: "/chat", label: "Chat" },
+    ...(session?.role === "buyer"
+      ? [{ href: "/voting", label: "Tomorrow’s menu" }]
+      : []),
     ...(session?.role === "buyer"
       ? [{ href: "/orders", label: "My orders" }]
       : []),
     ...(session?.role === "seller"
       ? [
-          { href: "/seller/orders", label: "Orders" },
-          { href: "/seller/menu", label: "My menu" },
-          { href: "/seller/kitchen", label: "My kitchen" },
-          { href: "/seller/earnings", label: "Earnings" },
+          { href: "/seller", label: "Seller portal" },
         ]
       : []),
     ...(session?.role === "inspector"
@@ -72,7 +90,7 @@ export default function Header() {
               Nanas&rsquo; <em>Kitchens</em>
             </span>
           </Link>
-          <nav className={styles.links} aria-label="Main navigation">
+          <nav ref={navRef} className={styles.links} aria-label="Main navigation">
             {links.map(({ href, label }) => (
               <Link
                 key={href}
@@ -80,6 +98,7 @@ export default function Header() {
                 className={styles.link}
                 aria-current={
                   pathname === href ||
+                  (href === "/seller" && pathname === "/voting") ||
                   (href !== "/" && pathname.startsWith(`${href}/`))
                     ? "page"
                     : undefined
@@ -117,6 +136,7 @@ export default function Header() {
           </div>
         </div>
       </header>
+      {session?.role === "seller" && (pathname === "/seller" || pathname.startsWith("/seller/") || pathname === "/voting") && <SellerNav />}
     </>
   );
 }
@@ -212,7 +232,7 @@ function NotificationBell({ session }: { session: Session }) {
             );
             // Deep-link by role: buyers to the order/kitchen, sellers to the board or
             // (for dish requests, which carry only kitchenId) their menu inbox.
-            const href =
+            const href = n.data?.pollId ? (session.role === "buyer" ? "/voting?tab=preorders" : "/voting") :
               session.role === "buyer"
                 ? n.data?.orderId
                   ? `/orders/${n.data.orderId}`

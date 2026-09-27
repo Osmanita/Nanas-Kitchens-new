@@ -117,6 +117,24 @@ public class PaymentsService {
                 .orElse(null);
     }
 
+    /** Only a verified paid Checkout event can replace its session reference and settle. */
+    @Transactional
+    public Map<String, Object> markCheckoutPaid(String sessionId, String intentId, Long amount, String currency) {
+        OrderRow order = lockByIntent(sessionId);
+        if (order == null || !"pending".equals(order.status()) || intentId == null) {
+            return Map.of("applied", false);
+        }
+        int expected = db.sql("SELECT \"totalCents\" FROM \"Order\" WHERE id = :id")
+                .param("id", order.id()).query(Integer.class).single();
+        if (amount == null || amount != expected || !"usd".equals(currency)) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.BAD_REQUEST, "PAYMENT_AMOUNT_MISMATCH");
+        }
+        db.sql("UPDATE \"Order\" SET \"paymentIntentId\" = :pi WHERE id = :id")
+                .param("pi", intentId).param("id", order.id()).update();
+        return markPaid(intentId);
+    }
+
     private void audit(String actor, String orderId, String action, Map<String, Object> after) {
         db.sql("""
                 INSERT INTO "AuditLog" (id, actor, entity, action, "after")

@@ -51,31 +51,36 @@ a {
 }
 
 .field:focus {
-  outline: 2px solid var(--brand-orange);
-  border-color: var(--brand-orange);
+  outline: 2px solid #bdcbb1;
+  border-color: var(--brand-green);
 }
 
 .btn-primary {
   display: inline-block;
   width: 100%;
   padding: 12px 20px;
-  background: var(--brand-orange);
+  background: var(--brand-green);
   color: #fff;
   border: none;
   border-radius: 10px;
   font-size: 16px;
   font-weight: 600;
   cursor: pointer;
+  text-decoration: none;
+  text-align: center;
+  transition: background 160ms ease, transform 160ms ease;
 }
 
 .btn-primary:hover {
-  background: var(--brand-orange-dark);
+  background: var(--accent-strong-hover);
 }
 
 .btn-primary:disabled {
   opacity: 0.5;
   cursor: default;
 }
+
+.btn-primary:active:not(:disabled) { transform: translateY(1px); }
 
 .form-error {
   background: #fef2f2;
@@ -104,8 +109,8 @@ a {
 }
 
 .role-toggle button[aria-pressed="true"] {
-  border-color: var(--brand-orange);
-  background: #fdf0e3;
+  border-color: var(--brand-green);
+  background: var(--accent-soft);
   font-weight: 600;
 }
 
@@ -225,16 +230,16 @@ a {
 .btn-add {
   padding: 6px 16px;
   border-radius: 999px;
-  border: 1px solid var(--brand-orange);
+  border: 1px solid #b8c5ae;
   background: #fff;
-  color: var(--brand-orange-dark);
+  color: var(--brand-green);
   font-size: 14px;
   font-weight: 600;
   cursor: pointer;
 }
 
 .btn-add:hover {
-  background: #fdf0e3;
+  background: var(--accent-soft);
 }
 
 .qty-stepper {
@@ -275,16 +280,17 @@ a {
   align-items: center;
   justify-content: space-between;
   padding: 14px 20px;
-  background: var(--brand-orange);
+  background: var(--brand-green);
   color: #fff;
   border-radius: 14px;
   text-decoration: none;
   font-weight: 600;
-  box-shadow: 0 6px 20px rgba(200, 95, 5, 0.35);
+  box-shadow: 0 6px 20px rgba(46, 74, 46, 0.18);
+  z-index: 40;
 }
 
 .cart-bar:hover {
-  background: var(--brand-orange-dark);
+  background: var(--accent-strong-hover);
 }
 
 /* Seller Today Board (Story 4.1) */

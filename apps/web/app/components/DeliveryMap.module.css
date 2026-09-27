@@ -1,0 +1,8 @@
+.preview { overflow: hidden; margin-top: 12px; border: 1px solid var(--line, #e1e3d8); border-radius: 14px; }
+.map { position: relative; height: 230px; isolation: isolate; background: #eef0e9; }
+.status { position: absolute; z-index: 500; bottom: 28px; left: 12px; right: 12px; width: fit-content; padding: 8px 12px; border: 1px solid #dce2d5; border-radius: 8px; background: #fff; color: #3e4c39; font-size: 12px; pointer-events: none; }
+.details { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 15px; background: #fff; }
+.details > div { min-width: 0; }
+.details span { display: block; margin-bottom: 4px; font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: #686e63; }
+.details strong { display: block; font-size: 13px; font-weight: 500; line-height: 1.4; }
+.details a { flex-shrink: 0; font-size: 12px; font-weight: 600; color: var(--brand-green); }

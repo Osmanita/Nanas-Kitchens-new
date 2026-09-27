@@ -5,6 +5,7 @@ import com.stripe.exception.StripeException;
 import com.stripe.model.PaymentIntent;
 import com.stripe.net.RequestOptions;
 import com.stripe.param.PaymentIntentCreateParams;
+import com.stripe.param.checkout.SessionCreateParams;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.HttpStatus;
@@ -24,15 +25,18 @@ public class StripePaymentProvider implements PaymentProvider {
 
     private final StripeClient client;
     private final String publishableKey;
+    private final String webBaseUrl;
 
     public StripePaymentProvider(
             @Value("${app.payments.stripe.secret-key}") String secretKey,
-            @Value("${app.payments.stripe.publishable-key}") String publishableKey) {
+            @Value("${app.payments.stripe.publishable-key}") String publishableKey,
+            @Value("${app.payments.web-base-url:http://localhost:3000}") String webBaseUrl) {
         if (secretKey == null || secretKey.isBlank()) {
             throw new IllegalStateException("app.payments.provider=stripe requires STRIPE_SECRET_KEY");
         }
         this.client = new StripeClient(secretKey);
         this.publishableKey = publishableKey;
+        this.webBaseUrl = webBaseUrl.replaceAll("/+$", "");
     }
 
     @Override
@@ -62,6 +66,16 @@ public class StripePaymentProvider implements PaymentProvider {
     @Override
     public boolean tryCancelIntent(String paymentIntentId) {
         try {
+            // While hosted Checkout is open the order holds its session id. The signed
+            // success webhook replaces it with the actual PaymentIntent id for refunds.
+            if (paymentIntentId.startsWith("cs_")) {
+                var session = client.checkout().sessions().retrieve(paymentIntentId);
+                if ("expired".equals(session.getStatus())) return true;
+                if (!"open".equals(session.getStatus())) return false;
+                client.checkout().sessions().expire(paymentIntentId);
+                return true;
+            }
+            if ("canceled".equals(client.paymentIntents().retrieve(paymentIntentId).getStatus())) return true;
             client.paymentIntents().cancel(paymentIntentId);
             return true;
         } catch (StripeException e) {
@@ -87,5 +101,46 @@ public class StripePaymentProvider implements PaymentProvider {
     @Override
     public String publishableKey() {
         return publishableKey;
+    }
+
+    @Override
+    public Checkout createCheckout(String orderId, int amountCents) {
+        var params = SessionCreateParams.builder()
+                .setMode(SessionCreateParams.Mode.PAYMENT)
+                // Keep the charged currency and amount identical to the USD order review.
+                .setAdaptivePricing(SessionCreateParams.AdaptivePricing.builder().setEnabled(false).build())
+                .setClientReferenceId(orderId)
+                .setSuccessUrl(webBaseUrl + "/orders/" + orderId)
+                .setCancelUrl(webBaseUrl + "/orders/" + orderId + "?checkout=cancelled")
+                .setPaymentIntentData(SessionCreateParams.PaymentIntentData.builder()
+                        .putMetadata("orderId", orderId).build())
+                .addLineItem(SessionCreateParams.LineItem.builder().setQuantity(1L)
+                        .setPriceData(SessionCreateParams.LineItem.PriceData.builder()
+                                .setCurrency("usd").setUnitAmount((long) amountCents)
+                                .setProductData(SessionCreateParams.LineItem.PriceData.ProductData.builder()
+                                        .setName("Nanas' Kitchens order")
+                                        .setDescription("Food and any delivery fee or tip included in your order total")
+                                        .build()).build()).build())
+                .build();
+        try {
+            var session = client.checkout().sessions().create(params,
+                    RequestOptions.builder().setIdempotencyKey("hosted-checkout:" + orderId).build());
+            return new Checkout(session.getId(), session.getUrl());
+        } catch (StripeException e) {
+            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "PAYMENT_PROVIDER_ERROR");
+        }
+    }
+
+    @Override
+    public Checkout retrieveCheckout(String sessionId) {
+        try {
+            var session = client.checkout().sessions().retrieve(sessionId);
+            if (!"open".equals(session.getStatus()) || session.getUrl() == null) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "CHECKOUT_NOT_OPEN");
+            }
+            return new Checkout(session.getId(), session.getUrl());
+        } catch (StripeException e) {
+            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "PAYMENT_PROVIDER_ERROR");
+        }
     }
 }
