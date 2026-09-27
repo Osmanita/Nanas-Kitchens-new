@@ -70,7 +70,7 @@ docker run -d --name "$prefix-cache" --network "$prefix" -v "$scratch:/tls:ro" \
   redis:7-alpine redis-server --port 0 --tls-port 6379 --tls-cert-file /tls/cert.pem \
   --tls-key-file /tls/key.pem --tls-ca-cert-file /tls/cert.pem --tls-auth-clients no \
   --requirepass fixtureRedisPassword
-docker run --rm --user 0 --entrypoint keytool -v "$scratch:/tls" "$image" \
+docker run --rm --user "$(id -u):$(id -g)" --entrypoint keytool -v "$scratch:/tls" "$image" \
   -importcert -noprompt -alias fixture -file /tls/cert.pem -keystore /tls/trust.jks -storepass changeit
 chmod 644 "$scratch/trust.jks"
 docker run -d --name "$prefix-app" --network "$prefix" -p 127.0.0.1:13000:8080 \
