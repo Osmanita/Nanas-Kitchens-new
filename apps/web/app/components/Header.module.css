@@ -41,6 +41,14 @@
   border-radius: 12px;
 }
 
+.preview {
+  display: block;
+  margin-top: 6px;
+  font: 500 10px / 1.2 Arial, sans-serif;
+  letter-spacing: 0;
+  color: #62685f;
+}
+
 .links {
   display: flex;
   align-items: center;

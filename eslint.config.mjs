@@ -15,6 +15,7 @@ export default tseslint.config(
       "**/dist/**",
       "**/.next/**",
       "**/.next-build/**",
+      "**/.next-preview/**",
       "**/target/**",
       "**/coverage/**",
       "apps/mobile/**",

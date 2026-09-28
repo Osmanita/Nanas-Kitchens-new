@@ -39,6 +39,7 @@ jobs:
       - run: pnpm --filter api prisma:generate
       - run: pnpm --filter api prisma:migrate:deploy
       - run: pnpm lint
+      - run: pnpm test:preview
       # prisma/ sits outside apps/api/tsconfig.json's "include", so nothing type-checked the
       # seed script - see apps/api/tsconfig.seed.json. seed.ts imports @culture-eats/core,
       # whose package.json points "types" at dist/, so the script builds that package first:

@@ -88,6 +88,9 @@ export default function Header() {
             </span>
             <span>
               Nanas&rsquo; <em>Kitchens</em>
+              {process.env.NEXT_PUBLIC_PREVIEW_MODE === "1" && (
+                <small className={styles.preview}>Private beta · Test payments only</small>
+              )}
             </span>
           </Link>
           <nav ref={navRef} className={styles.links} aria-label="Main navigation">

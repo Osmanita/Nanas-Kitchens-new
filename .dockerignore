@@ -12,6 +12,7 @@
 **/dist
 **/.next
 **/.next-build
+**/.next-preview
 **/target
 **/coverage
 **/*.tsbuildinfo

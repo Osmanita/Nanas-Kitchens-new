@@ -6,6 +6,8 @@
     "clean:local": "bash ./scripts/clean-local-builds.sh",
     "dev:local": "bash ./scripts/run-local.sh",
     "stripe:listen": "node scripts/stripe-listen.cjs",
+    "preview": "node scripts/preview/run.cjs",
+    "test:preview": "node --test scripts/preview/environment.test.cjs",
     "build": "pnpm -r build",
     "test": "pnpm -r test",
     "lint": "eslint ."

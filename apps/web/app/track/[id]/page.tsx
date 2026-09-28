@@ -1,4 +1,5 @@
-const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
+// Server rendering requires an absolute origin even when browsers use /api.
+const API = process.env.API_INTERNAL_URL ?? process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
 
 interface TrackInfo {
   externalId: string;

@@ -10,6 +10,7 @@ import type { NextConfig } from "next";
 // `pnpm build` fail on this machine with EPERM after compiling successfully, which is
 // a miserable way to find out. Linux (Docker, CI) has no such restriction.
 const standalone = process.env.NEXT_OUTPUT_STANDALONE === "1";
+const privatePreview = process.env.NANAS_PREVIEW === "1";
 
 const nextConfig: NextConfig = {
   // Keep verification builds separate from a running dev server's Webpack cache.
@@ -20,6 +21,18 @@ const nextConfig: NextConfig = {
   // inferred root changes where standalone/ nests server.js — which would silently
   // break the COPY paths in Dockerfile. Pin it; keep the two in step.
   outputFileTracingRoot: path.join(__dirname, "../.."),
+  ...(privatePreview ? {
+    // Keep browser API requests on the protected domain, including Access cookies.
+    async rewrites() {
+      return [{ source: "/api/:path*", destination: "http://127.0.0.1:8080/:path*" }];
+    },
+    async headers() {
+      return [{ source: "/:path*", headers: [
+        { key: "X-Robots-Tag", value: "noindex, nofollow, noarchive" },
+        { key: "Cache-Control", value: "private, no-store" },
+      ] }];
+    },
+  } : {}),
 };
 
 export default nextConfig;
