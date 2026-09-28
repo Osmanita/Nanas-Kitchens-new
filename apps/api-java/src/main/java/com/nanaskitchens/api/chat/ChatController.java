@@ -8,6 +8,7 @@ import java.util.Map;
 import java.util.Set;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -41,8 +42,8 @@ public class ChatController {
      * Accepts conversation history, streams SSE agent response. Auth: valid JWT required.
      */
     @PostMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public Flux<String> stream(@Valid @RequestBody ChatRequest request, Authentication authentication) {
-        return agentService.streamChat(request.messages(), authentication.getName());
+    public ResponseEntity<Flux<String>> stream(@Valid @RequestBody ChatRequest request, Authentication authentication) {
+        return streamResponse(agentService.streamChat(request.messages(), authentication.getName()));
     }
 
     /**
@@ -51,8 +52,17 @@ public class ChatController {
      */
     @PostMapping(value = "/seller/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     @PreAuthorize("hasRole('SELLER')")
-    public Flux<String> streamSeller(@Valid @RequestBody ChatRequest request, Authentication authentication) {
-        return agentService.streamSellerChat(request.messages(), authentication.getName());
+    public ResponseEntity<Flux<String>> streamSeller(@Valid @RequestBody ChatRequest request, Authentication authentication) {
+        return streamResponse(agentService.streamSellerChat(request.messages(), authentication.getName()));
+    }
+
+    private ResponseEntity<Flux<String>> streamResponse(Flux<String> events) {
+        // Next.js compression otherwise buffers small SSE chunks until the response ends.
+        // no-transform also tells the public proxy to preserve the live token stream.
+        return ResponseEntity.ok()
+                .header("Cache-Control", "private, no-store, no-transform")
+                .header("X-Accel-Buffering", "no")
+                .body(events);
     }
 
     /**

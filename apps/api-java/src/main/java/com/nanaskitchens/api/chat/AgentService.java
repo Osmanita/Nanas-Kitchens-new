@@ -1,15 +1,14 @@
 package com.nanaskitchens.api.chat;
 
 import com.nanaskitchens.api.chat.dto.ChatMessage;
-import com.nanaskitchens.api.chat.dto.ChatRequest;
 import com.nanaskitchens.api.inventory.InventoryService;
 import com.nanaskitchens.api.kitchens.KitchensService;
 import com.nanaskitchens.api.menus.MenusService;
 import com.nanaskitchens.api.orders.OrdersService;
+import java.time.Duration;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.util.List;
-import java.util.Map;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
@@ -17,7 +16,6 @@ import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
-import reactor.core.publisher.Mono;
 import tools.jackson.databind.json.JsonMapper;
 
 @Service
@@ -30,6 +28,7 @@ public class AgentService {
     private final OrdersService ordersService;
     private final InventoryService inventoryService;
     private final MenusService menusService;
+    private final ChatStream stream;
 
     public AgentService(
             ObjectProvider<ChatClient.Builder> chatClientBuilders,
@@ -48,6 +47,7 @@ public class AgentService {
         this.ordersService = ordersService;
         this.inventoryService = inventoryService;
         this.menusService = menusService;
+        this.stream = new ChatStream(jsonMapper, Duration.ofSeconds(35));
     }
 
     /**
@@ -59,22 +59,17 @@ public class AgentService {
         KitchenOrderTools tools =
                 new KitchenOrderTools(kitchensService, ordersService, inventoryService, jsonMapper, buyerId);
 
-        List<Message> history = messages.stream()
+        List<Message> history = recentHistory(messages).stream()
                 .<Message>map(m -> "assistant".equals(m.role())
                         ? new AssistantMessage(m.content())
                         : new UserMessage(m.content()))
                 .toList();
-        Flux<String> textDeltas = chatClient
+        return stream.events(() -> chatClient
                 .prompt()
                 .messages(history)
                 .tools(tools)
                 .stream()
-                .content()
-                .map(delta -> toEvent("text", delta));
-
-        return textDeltas.timeout(java.time.Duration.ofSeconds(40))
-                .onErrorResume(error -> Mono.just(toEvent("error", "Nana could not respond. Please try again.")))
-                .concatWith(Mono.just(toEvent("done", null)));
+                .content(), "buyer");
     }
 
     /** Seller-side menu builder: same SSE shape, seller tools and prompt instead of the ordering ones. */
@@ -86,24 +81,31 @@ public class AgentService {
                         java.util.stream.Stream.of(new UserMessage("[Context: today's date is "
                                 + LocalDate.now(ZoneOffset.UTC)
                                 + " (UTC). Use it whenever the seller says today.]")),
-                        messages.stream()
+                        recentHistory(messages).stream()
                                 .<Message>map(m -> "assistant".equals(m.role())
                                         ? new AssistantMessage(m.content())
                                         : new UserMessage(m.content())))
                 .toList();
 
-        return sellerChatClient
+        return stream.events(() -> sellerChatClient
                 .prompt()
                 .messages(history)
                 .tools(tools)
                 .stream()
-                .content()
-                .map(delta -> toEvent("text", delta))
-                .concatWith(Mono.just(toEvent("done", null)));
+                .content(), "seller");
     }
 
-    private String toEvent(String type, String delta) {
-        Map<String, Object> payload = delta == null ? Map.of("type", type) : Map.of("type", type, "delta", delta);
-        return jsonMapper.writeValueAsString(payload);
+    static List<ChatMessage> recentHistory(List<ChatMessage> messages) {
+        // Keep whole recent turns, including card IDs, instead of sending every old menu again.
+        int start = messages.size();
+        int characters = 0;
+        while (start > 0 && messages.size() - start < 20) {
+            int length = messages.get(start - 1).content().length();
+            if (start < messages.size() && characters + length > 60_000) break;
+            characters += length;
+            start--;
+        }
+        while (start < messages.size() - 1 && "assistant".equals(messages.get(start).role())) start++;
+        return messages.subList(start, messages.size());
     }
 }

@@ -37,6 +37,21 @@ beforeEach(() => {
 });
 
 describe("chat interactions", () => {
+  it("lets a buyer browse kitchens when the provider is busy without another AI call", async () => {
+    localStorage.setItem("location", JSON.stringify({ label: "Powell", lat: 40.1578, lng: -83.0752 }));
+    vi.mocked(apiFetch)
+      .mockResolvedValueOnce(new Response(event("error", "Nana's AI service is busy right now.")))
+      .mockResolvedValueOnce(new Response(JSON.stringify([])));
+    render(<ChatPage />);
+    fireEvent.change(screen.getByRole("textbox", { name: "Message" }), { target: { value: "Recommend a dinner" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("AI service is busy");
+    fireEvent.click(screen.getByRole("button", { name: "Browse nearby kitchens" }));
+    await screen.findByText("No kitchens match this search near your selected location.");
+    expect(vi.mocked(apiFetch).mock.calls[1][0]).toMatch(/^\/kitchens\/search\?/);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
   it("retries a failed message without duplicating the user turn or sending error copy to the model", async () => {
     vi.mocked(apiFetch)
       .mockResolvedValueOnce(new Response(null, { status: 500 }))

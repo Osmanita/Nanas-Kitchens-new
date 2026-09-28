@@ -7,6 +7,7 @@ import { FormEvent, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { apiFetch, getSession, Session } from "../../../lib/api";
+import { CHAT_TIMEOUT_MS, chatFailureMessage, readChatStream } from "../../../lib/chat-stream";
 import { renderRich } from "../../../lib/rich-text";
 
 interface Message {
@@ -58,6 +59,7 @@ export default function SellerMenuChatPage() {
   const [draft, setDraft] = useState<MenuDraftCard | null>(null);
   const [published, setPublished] = useState<MenuPublishedCard | null>(null);
   const [queued, setQueued] = useState<string | null>(null);
+  const [failure, setFailure] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -78,7 +80,7 @@ export default function SellerMenuChatPage() {
   useEffect(() => {
     if (streaming) return;
     inputRef.current?.focus();
-    if (queued) {
+    if (queued && !failure) {
       const text = queued;
       setQueued(null);
       send(text);
@@ -92,6 +94,7 @@ export default function SellerMenuChatPage() {
     setMessages(next);
     setInput("");
     setStreaming(true);
+    setFailure(null);
     setDraft(null);
     setPublished(null);
 
@@ -105,6 +108,7 @@ export default function SellerMenuChatPage() {
       const res = await apiFetch(`/chat/seller/stream`, {
         method: "POST",
         body: JSON.stringify({ messages: next }),
+        signal: AbortSignal.timeout(CHAT_TIMEOUT_MS),
       });
 
       if (res.status === 401) {
@@ -119,30 +123,11 @@ export default function SellerMenuChatPage() {
         return;
       }
       if (!res.ok) {
-        setMessages([
-          ...next,
-          { role: "assistant", content: `Something went wrong (HTTP ${res.status}). Please try again.` },
-        ]);
+        setFailure("Nana couldn’t reply just now. You can also edit your menu directly.");
         return;
       }
 
-      const reader = res.body!.getReader();
-      const decoder = new TextDecoder();
-      let buf = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        const lines = buf.split("\n");
-        buf = lines.pop() ?? "";
-        for (const line of lines) {
-          if (!line.startsWith("data:")) continue;
-          const payload = JSON.parse(line.slice(5).trim());
-          if (payload.type === "text") addChunk(payload.delta);
-          else if (payload.type === "done") break;
-        }
-      }
+      await readChatStream(res, addChunk);
 
       const blockMatch = assistantText.match(/```json\n([\s\S]*?)\n```/);
       if (blockMatch) {
@@ -164,16 +149,10 @@ export default function SellerMenuChatPage() {
       }
 
       setMessages([...next, { role: "assistant", content: assistantText }]);
-    } catch {
-      setMessages([
-        ...next,
-        {
-          role: "assistant",
-          content: assistantText
-            ? assistantText + "\n\n[connection interrupted]"
-            : "Connection error. Please try again.",
-        },
-      ]);
+    } catch (error) {
+      // A write tool may already have saved/published before the connection failed.
+      // Do not automatically replay the request or put error copy in model history.
+      setFailure(chatFailureMessage(error));
     } finally {
       setStreaming(false);
     }
@@ -302,6 +281,13 @@ export default function SellerMenuChatPage() {
               <span className="typing-dot" />
               <span className="typing-dot" />
             </div>
+          </div>
+        )}
+
+        {failure && (
+          <div className="form-error" role="alert">
+            <p>{failure}</p>
+            <Link href="/seller/menu">Check or edit your menu directly</Link>
           </div>
         )}
 

@@ -40,8 +40,8 @@ spring:
     # Dev default is Gemini (free tier); set AI_PROVIDER=anthropic for the full version.
     model:
       chat: ${AI_PROVIDER:google-genai}
-    # Free-tier RPM cap: the agentic tool loop makes several model calls per user message,
-    # so 429s are expected in bursts. Back off and retry instead of failing the request.
+    # Generic provider retry settings. Gemini streaming uses the bounded SDK transport
+    # configured in GeminiClientConfiguration, not this Spring RetryTemplate.
     retry:
       max-attempts: 2
       on-http-codes: [429, 503]

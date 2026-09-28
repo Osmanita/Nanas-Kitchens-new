@@ -43,8 +43,8 @@ public class KitchenOrderTools {
 
     @Tool(description = "Search for kitchens within 10 miles. Give either lat/lng coordinates or a city/postal-code location (for example 43065). Returns name, cuisine, distance, live portions left, and rating (ratingAvg/ratingCount, null if no reviews yet).")
     public String searchKitchens(
-            Double lat,
-            Double lng,
+            @ToolParam(required = false) Double lat,
+            @ToolParam(required = false) Double lng,
             @ToolParam(required = false, description = "A city, address, or postal code supplied by the buyer, such as 43065. Use this when lat/lng are not available.")
                     String location,
             @ToolParam(

@@ -3,6 +3,7 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { apiFetch } from "../../lib/api";
+import { CHAT_TIMEOUT_MS, chatFailureMessage, nearbyKitchenQuery, readChatStream } from "../../lib/chat-stream";
 import {
   getLocation,
   saveLocation,
@@ -259,7 +260,8 @@ export default function ChatPage() {
     history: Message[] = messages,
   ) {
     const nearbyLocation = locationOverride !== undefined ? locationOverride : location;
-    if (nearbyLocation && ["Find Turkish food near me", "What's cooking near me today?"].includes(text.trim())) {
+    const discovery = nearbyKitchenQuery(text);
+    if (nearbyLocation && discovery) {
       if (streaming) return;
       setStreaming(true);
       setInput("");
@@ -269,8 +271,8 @@ export default function ChatPage() {
       setMessages(next);
       try {
         const query = new URLSearchParams({ lat: String(nearbyLocation.lat), lng: String(nearbyLocation.lng) });
-        if (text.trim() === "Find Turkish food near me") query.set("cuisine", "turkish");
-        const response = await apiFetch(`/kitchens/search?${query}`);
+        if (discovery.cuisine) query.set("cuisine", discovery.cuisine);
+        const response = await apiFetch(`/kitchens/search?${query}`, { signal: AbortSignal.timeout(10_000) });
         if (!response.ok) throw new Error();
         const items = await response.json();
         setPendingKitchens({ type: "kitchens", items });
@@ -322,7 +324,7 @@ export default function ChatPage() {
       const res = await apiFetch(`/chat/stream`, {
         method: "POST",
         body: JSON.stringify({ messages: payloadMessages }),
-        signal: AbortSignal.timeout(45_000),
+        signal: AbortSignal.timeout(CHAT_TIMEOUT_MS),
       });
 
       if (res.status === 401 || res.status === 403) {
@@ -339,25 +341,7 @@ export default function ChatPage() {
         return;
       }
 
-      const reader = res.body!.getReader();
-      const decoder = new TextDecoder();
-      let buf = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        const lines = buf.split("\n");
-        buf = lines.pop() ?? "";
-        for (const line of lines) {
-          // NestJS wrote "data: {...}", Spring MVC writes "data:{...}" — accept both.
-          if (!line.startsWith("data:")) continue;
-          const payload = JSON.parse(line.slice(5).trim());
-          if (payload.type === "text") addChunk(payload.delta);
-          else if (payload.type === "error") throw new Error("CHAT_UNAVAILABLE");
-          else if (payload.type === "done") break;
-        }
-      }
+      await readChatStream(res, addChunk);
 
       // Structured card blocks embedded in assistant text (menu picker / order summary).
       const structured = extractStructuredBlock(assistantText);
@@ -383,11 +367,11 @@ export default function ChatPage() {
       setMessages([...next, { role: "assistant", content: assistantText,
         ...(structured ? { context: JSON.stringify(structured.parsed) } : {}),
       }]);
-    } catch {
+    } catch (error) {
       setFailure({
         text,
         history,
-        message: "The connection was interrupted. Try again when you’re ready.",
+        message: chatFailureMessage(error),
       });
     } finally {
       setStreaming(false);
@@ -829,6 +813,12 @@ export default function ChatPage() {
             >
               Try again <Icon name="arrow" width="16" height="16" />
             </button>
+            {location ? (
+              <button type="button" disabled={streaming}
+                onClick={() => send("What's cooking near me today?")}>
+                Browse nearby kitchens
+              </button>
+            ) : <Link href="/">Browse kitchens</Link>}
           </div>
         )}
 
